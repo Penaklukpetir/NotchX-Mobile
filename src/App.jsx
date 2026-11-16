@@ -35,6 +35,10 @@ import {
   getStoredCredentials,
   saveStoredCredentials
 } from './lib/supabase';
+import {
+  syncWidgetCredentials,
+  registerWidgetDeepLinks
+} from './lib/widgetBridge';
 
 const THEMES = [
   { id: 'ObsidianGold', label: 'Obsidian Gold', hex: '#E5C158', rgb: '229, 193, 88' },
@@ -135,6 +139,7 @@ function formatPayloadText(payload) {
   }
   if (typeof payload === 'object') {
     if (payload.file_name) return `Kirim File: ${payload.file_name}`;
+    if (payload.action) return `Widget Action: ${payload.action}`;
     return (
       payload.prompt ||
       payload.theme ||
@@ -249,6 +254,7 @@ export default function App() {
 
   const gridRef = useRef(null);
   const recognitionRef = useRef(null);
+  const promptInputRef = useRef(null);
 
   // Apply dynamic theme CSS variables
   useEffect(() => {
@@ -340,6 +346,12 @@ export default function App() {
     const creds = getStoredCredentials();
     setSettingsUrl(creds.url);
     setSettingsKey(creds.anonKey);
+    syncWidgetCredentials({
+      supabaseUrl: creds.url,
+      supabaseAnonKey: creds.anonKey,
+      userId: 'default_user',
+      deviceName: 'windows'
+    });
 
     if (!supabase) {
       setIslandState('unconfigured');
@@ -577,10 +589,34 @@ export default function App() {
   const handleSaveSettings = (e) => {
     e.preventDefault();
     saveStoredCredentials(settingsUrl, settingsKey);
+    syncWidgetCredentials({
+      supabaseUrl: settingsUrl,
+      supabaseAnonKey: settingsKey,
+      userId: 'default_user',
+      deviceName: 'windows'
+    });
     const nextClient = createNotchXSupabaseClient();
     setSupabase(nextClient);
     setShowSettingsModal(false);
   };
+
+  // Register Android Home Screen Widget deep link triggers (notchx://voice & notchx://files)
+  useEffect(() => {
+    return registerWidgetDeepLinks({
+      onVoiceTrigger: () => {
+        setTimeout(() => {
+          toggleVoiceRecognition();
+        }, 250);
+      },
+      onFileSearchTrigger: () => {
+        setPromptText('Cari file ');
+        setTimeout(() => {
+          promptInputRef.current?.focus();
+        }, 200);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#09090B] text-zinc-100 flex flex-col items-center pb-32 px-4 select-none nx-perspective-stage">
@@ -1022,6 +1058,7 @@ export default function App() {
           </button>
 
           <input
+            ref={promptInputRef}
             type="text"
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}

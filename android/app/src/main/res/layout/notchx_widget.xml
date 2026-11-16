@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/notchx_widget_bg"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <!-- Header Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="NotchX Remote"
+            android:textColor="#E5C158"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_status_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="● WINDOWS SYNC"
+            android:textColor="#34D399"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Top Row: Deep Link Triggers (Mic / Voice & Cari File) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:paddingBottom="6dp">
+
+        <Button
+            android:id="@+id/btn_widget_voice"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="1"
+            android:background="@drawable/notchx_widget_gold_btn_bg"
+            android:text="🎙️ Voice"
+            android:textAllCaps="false"
+            android:textColor="#E5C158"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_widget_files"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:background="@drawable/notchx_widget_gold_btn_bg"
+            android:text="📁 Cari File"
+            android:textAllCaps="false"
+            android:textColor="#E5C158"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Bottom Row: Instant Background OS Actions (Play/Pause, Mute, Lock PC) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_widget_play_pause"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="1"
+            android:background="@drawable/notchx_widget_btn_bg"
+            android:text="⏯️ Play"
+            android:textAllCaps="false"
+            android:textColor="#F4F4F5"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/btn_widget_mute"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="2dp"
+            android:layout_weight="1"
+            android:background="@drawable/notchx_widget_btn_bg"
+            android:text="🔇 Mute"
+            android:textAllCaps="false"
+            android:textColor="#F4F4F5"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/btn_widget_lock"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:background="@drawable/notchx_widget_btn_bg"
+            android:text="🔒 Lock PC"
+            android:textAllCaps="false"
+            android:textColor="#FB7185"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</LinearLayout>

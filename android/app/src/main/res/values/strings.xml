@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NotchX</string>
+    <string name="title_activity_main">NotchX</string>
+    <string name="package_name">com.notchx.remote</string>
+    <string name="custom_url_scheme">com.notchx.remote</string>
+    <string name="widget_description">NotchX Obsidian Gold Remote Control for Windows Laptop</string>
+</resources>
