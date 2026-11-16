@@ -28,20 +28,24 @@ jobs:
           npm run build
           npx cap sync android
 
-      - name: Setup Java 17
+      - name: Setup Java 21
+        id: setup-java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Accept Android SDK Licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Build Debug APK
         working-directory: ./android
+        env:
+          JAVA_HOME: ${{ steps.setup-java.outputs.path }}
         run: |
+          java -version
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon -Dorg.gradle.java.home=${{ steps.setup-java.outputs.path }}
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
