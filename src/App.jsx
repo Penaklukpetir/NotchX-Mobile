@@ -3,6 +3,11 @@ import gsap from 'gsap';
 import {
   Gamepad2,
   FileText,
+  FileSpreadsheet,
+  FileArchive,
+  FileImage,
+  FileCode,
+  File,
   FolderSearch,
   Eye,
   Play,
@@ -19,7 +24,11 @@ import {
   Palette,
   RefreshCw,
   X,
-  ShieldAlert
+  ShieldAlert,
+  Download,
+  ArrowUpRight,
+  Loader2,
+  CheckCircle2
 } from 'lucide-react';
 import {
   createNotchXSupabaseClient,
@@ -110,7 +119,14 @@ function formatPayloadText(payload) {
     try {
       const parsed = JSON.parse(payload);
       if (parsed && typeof parsed === 'object') {
-        return parsed.prompt || parsed.theme || parsed.text || payload;
+        return (
+          parsed.prompt ||
+          parsed.theme ||
+          parsed.file_name ||
+          parsed.file_path ||
+          parsed.text ||
+          payload
+        );
       }
     } catch {
       // Plain string payload
@@ -118,9 +134,94 @@ function formatPayloadText(payload) {
     return payload;
   }
   if (typeof payload === 'object') {
-    return payload.prompt || payload.theme || payload.text || JSON.stringify(payload);
+    if (payload.file_name) return `Kirim File: ${payload.file_name}`;
+    return (
+      payload.prompt ||
+      payload.theme ||
+      payload.file_path ||
+      payload.text ||
+      JSON.stringify(payload)
+    );
   }
   return String(payload);
+}
+
+function extractJsonObjectAfterMarker(text, marker) {
+  const idx = text.indexOf(marker);
+  const slice = idx >= 0 ? text.slice(idx + marker.length) : text;
+  const firstBrace = slice.indexOf('{');
+  const lastBrace = slice.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) return null;
+  try {
+    return JSON.parse(slice.slice(firstBrace, lastBrace + 1));
+  } catch {
+    return null;
+  }
+}
+
+function parseStructuredResult(resultText) {
+  if (!resultText || typeof resultText !== 'string') return null;
+
+  // Case A: __NOTCHX_FILE_SUGGESTIONS__
+  if (resultText.includes('__NOTCHX_FILE_SUGGESTIONS__')) {
+    const data = extractJsonObjectAfterMarker(resultText, '__NOTCHX_FILE_SUGGESTIONS__');
+    if (data) {
+      const rawFiles = Array.isArray(data.files)
+        ? data.files
+        : Array.isArray(data.results)
+        ? data.results
+        : [];
+      const files = rawFiles.map((f) => ({
+        fileName: f.fileName || f.file_name || f.name || 'Document',
+        fullPath: f.fullPath || f.full_path || f.path || '',
+        sizeFormatted: f.sizeFormatted || f.size_formatted || f.size || '',
+        lastModified: f.lastModified || f.last_modified || f.modified || ''
+      }));
+      return {
+        kind: 'file_suggestions',
+        query: data.query || 'recent',
+        files
+      };
+    }
+  }
+
+  // Case B: __NOTCHX_FILE_READY__
+  if (resultText.includes('__NOTCHX_FILE_READY__')) {
+    const data = extractJsonObjectAfterMarker(resultText, '__NOTCHX_FILE_READY__');
+    if (data) {
+      return {
+        kind: 'file_ready',
+        fileName: data.fileName || data.file_name || 'Document',
+        sizeFormatted: data.sizeFormatted || data.size_formatted || data.size || '',
+        downloadUrl: data.downloadUrl || data.download_url || data.url || ''
+      };
+    }
+  }
+
+  return null;
+}
+
+function getFileVisualMeta(fileName = '') {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  if (['doc', 'docx', 'txt', 'md', 'rtf'].includes(ext)) {
+    return { Icon: FileText, badge: ext.toUpperCase() || 'DOC', color: '#38BDF8' };
+  }
+  if (['pdf'].includes(ext)) {
+    return { Icon: FileText, badge: 'PDF', color: '#FB7185' };
+  }
+  if (['xls', 'xlsx', 'csv'].includes(ext)) {
+    return { Icon: FileSpreadsheet, badge: ext.toUpperCase(), color: '#34D399' };
+  }
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+    return { Icon: FileArchive, badge: ext.toUpperCase(), color: '#FBBF24' };
+  }
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext)) {
+    return { Icon: FileImage, badge: ext.toUpperCase(), color: '#C084FC' };
+  }
+  if (['json', 'js', 'ts', 'py', 'cs', 'html', 'css'].includes(ext)) {
+    return { Icon: FileCode, badge: ext.toUpperCase(), color: '#E5C158' };
+  }
+  return { Icon: File, badge: (ext || 'FILE').toUpperCase().slice(0, 4), color: '#E5C158' };
 }
 
 export default function App() {
@@ -136,6 +237,7 @@ export default function App() {
 
   const [commands, setCommands] = useState([]);
   const [copiedId, setCopiedId] = useState(null);
+  const [uploadingFiles, setUploadingFiles] = useState({}); // { [fullPath]: commandId | true }
 
   const [showClipboardModal, setShowClipboardModal] = useState(false);
   const [clipboardInput, setClipboardInput] = useState('');
@@ -175,6 +277,44 @@ export default function App() {
       }
     );
   }, []);
+
+  // Automatically clear uploadingFiles spinner when corresponding fetch_file row completes
+  useEffect(() => {
+    setUploadingFiles((prev) => {
+      const entries = Object.entries(prev);
+      if (entries.length === 0) return prev;
+
+      let changed = false;
+      const next = { ...prev };
+
+      for (const [fullPath, trackedCmdId] of entries) {
+        const match = commands.find((c) => {
+          if (trackedCmdId && String(c.id) === String(trackedCmdId)) return true;
+          if (c.command_type === 'fetch_file' && c.payload) {
+            const p =
+              typeof c.payload === 'string'
+                ? (() => {
+                    try {
+                      return JSON.parse(c.payload);
+                    } catch {
+                      return null;
+                    }
+                  })()
+                : c.payload;
+            return p?.file_path === fullPath;
+          }
+          return false;
+        });
+
+        if (match && (match.status === 'executed' || match.status === 'error')) {
+          delete next[fullPath];
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [commands]);
 
   const fetchRecentCommands = useCallback(async (client) => {
     if (!client) return;
@@ -255,7 +395,7 @@ export default function App() {
     triggerHaptic(15);
     if (!supabase) {
       setShowSettingsModal(true);
-      return;
+      return null;
     }
 
     setIslandState('executing');
@@ -306,13 +446,41 @@ export default function App() {
       );
       setIslandState('connected');
       setIslandDetail('Send Failed');
-      return;
+      return null;
     }
 
     if (data) {
       setCommands((prev) =>
         prev.map((c) => (c.id === optimisticId ? data : c))
       );
+      return data;
+    }
+    return null;
+  };
+
+  const handleFetchFileFromLaptop = async (file) => {
+    if (!file?.fullPath || uploadingFiles[file.fullPath]) return;
+    triggerHaptic(18);
+
+    setUploadingFiles((prev) => ({ ...prev, [file.fullPath]: true }));
+
+    const inserted = await dispatchRemoteCommand(
+      'fetch_file',
+      {
+        file_path: file.fullPath,
+        file_name: file.fileName
+      },
+      `Uploading ${file.fileName}...`
+    );
+
+    if (inserted?.id) {
+      setUploadingFiles((prev) => ({ ...prev, [file.fullPath]: inserted.id }));
+    } else {
+      setUploadingFiles((prev) => {
+        const copy = { ...prev };
+        delete copy[file.fullPath];
+        return copy;
+      });
     }
   };
 
@@ -618,6 +786,8 @@ export default function App() {
               {commands.map((cmd) => {
                 const isPending = cmd.status === 'pending';
                 const isError = cmd.status === 'error';
+                const structured = !isPending ? parseStructuredResult(cmd.result_text) : null;
+
                 return (
                   <article
                     key={cmd.id}
@@ -641,7 +811,7 @@ export default function App() {
                         </span>
                       </div>
 
-                      {cmd.result_text && (
+                      {cmd.result_text && !structured && (
                         <button
                           type="button"
                           onClick={() => handleCopyResult(cmd.id, cmd.result_text)}
@@ -669,7 +839,148 @@ export default function App() {
                     {isPending ? (
                       <div className="text-[11px] text-amber-300/90 flex items-center gap-2 pt-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                        Menunggu eksekusi dari NotchX.exe di laptop...
+                        {cmd.command_type === 'fetch_file'
+                          ? 'Mengunggah file dari laptop ke cloud...'
+                          : 'Menunggu eksekusi dari NotchX.exe di laptop...'}
+                      </div>
+                    ) : structured?.kind === 'file_suggestions' ? (
+                      /* CASE A: __NOTCHX_FILE_SUGGESTIONS__ INTERACTIVE CARDS */
+                      <div className="flex flex-col gap-2 pt-1">
+                        <div className="flex items-center justify-between text-[11px] text-zinc-400 px-0.5">
+                          <span>
+                            Ditemukan <strong className="text-zinc-200">{structured.files.length}</strong> file
+                            {structured.query ? ` (${structured.query})` : ''}
+                          </span>
+                          <span className="text-[10px] text-[#E5C158]">Tap untuk kirim ke HP</span>
+                        </div>
+
+                        {structured.files.length === 0 ? (
+                          <div className="text-xs text-zinc-400 bg-black/40 border border-white/[0.06] rounded-xl p-3">
+                            Tidak ada file yang cocok ditemukan di laptop.
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {structured.files.map((file, idx) => {
+                              const { Icon: FileIcon, badge, color } = getFileVisualMeta(file.fileName);
+                              const isUploading = Boolean(uploadingFiles[file.fullPath]);
+
+                              return (
+                                <button
+                                  key={`${file.fullPath}-${idx}`}
+                                  type="button"
+                                  disabled={isUploading}
+                                  onClick={() => handleFetchFileFromLaptop(file)}
+                                  className="w-full text-left rounded-xl p-3 bg-[#09090B]/90 hover:bg-white/[0.04] border border-[#E5C158]/25 hover:border-[#E5C158]/60 transition-all flex items-center justify-between gap-3 group active:scale-[0.985]"
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div
+                                      className="w-10 h-10 rounded-xl flex flex-col items-center justify-center shrink-0 border border-white/10"
+                                      style={{
+                                        backgroundColor: `${color}18`,
+                                        color
+                                      }}
+                                    >
+                                      <FileIcon className="w-4 h-4" />
+                                      <span className="text-[8px] font-mono font-bold tracking-tighter mt-0.5">
+                                        {badge}
+                                      </span>
+                                    </div>
+
+                                    <div className="min-w-0 flex flex-col">
+                                      <span className="text-xs font-bold text-zinc-100 truncate">
+                                        {file.fileName}
+                                      </span>
+                                      <span className="text-[11px] text-zinc-400 truncate">
+                                        {[file.sizeFormatted, file.lastModified]
+                                          .filter(Boolean)
+                                          .join(' • ')}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="shrink-0">
+                                    {isUploading ? (
+                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-[10px] font-semibold text-amber-300">
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                        Mengunggah dari laptop...
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-[#E5C158]/15 group-hover:bg-[#E5C158]/25 border border-[#E5C158]/40 text-[10px] font-semibold text-[#E5C158]">
+                                        Kirim ke HP
+                                        <ArrowUpRight className="w-3 h-3" />
+                                      </span>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ) : structured?.kind === 'file_ready' ? (
+                      /* CASE B: __NOTCHX_FILE_READY__ CHAMPAGNE GOLD DOWNLOAD CARD */
+                      <div
+                        className="mt-1 rounded-2xl p-4 border flex flex-col gap-3"
+                        style={{
+                          background:
+                            'linear-gradient(145deg, rgba(229, 193, 88, 0.14) 0%, rgba(9, 9, 11, 0.95) 100%)',
+                          borderColor: 'rgba(229, 193, 88, 0.45)',
+                          boxShadow: '0 12px 30px rgba(229, 193, 88, 0.12)'
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-[#E5C158]/20 border border-[#E5C158]/40 flex items-center justify-center text-[#E5C158] shrink-0">
+                              <CheckCircle2 className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-[#E5C158]">
+                                File Siap Diunduh
+                              </div>
+                              <div className="text-xs font-bold text-zinc-100 truncate">
+                                {structured.fileName}
+                              </div>
+                              {structured.sizeFormatted && (
+                                <div className="text-[11px] text-zinc-400">
+                                  Ukuran: {structured.sizeFormatted}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <a
+                            href={structured.downloadUrl}
+                            download={structured.fileName}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => triggerHaptic(16)}
+                            className="py-2.5 px-3 rounded-xl bg-[#E5C158] hover:bg-[#eabef0]/90 text-black text-xs font-bold flex items-center justify-center gap-1.5 shadow-[0_0_20px_rgba(229,193,88,0.35)] active:scale-95 transition-transform"
+                            style={{ backgroundColor: '#E5C158' }}
+                          >
+                            <Download className="w-4 h-4" />
+                            Download File
+                          </a>
+
+                          <button
+                            type="button"
+                            onClick={() => handleCopyResult(cmd.id, structured.downloadUrl)}
+                            className="py-2.5 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-xs font-semibold text-zinc-200 flex items-center justify-center gap-1.5 active:scale-95 transition-transform"
+                          >
+                            {copiedId === cmd.id ? (
+                              <>
+                                <Check className="w-4 h-4 text-emerald-400" />
+                                <span>Link Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-4 h-4" />
+                                <span>Copy Link</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       cmd.result_text && (
