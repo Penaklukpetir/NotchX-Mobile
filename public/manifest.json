@@ -1,0 +1,18 @@
+{
+  "name": "NotchX Mobile Companion",
+  "short_name": "NotchX",
+  "description": "Luxury Remote OS Controller for Windows NotchX via Supabase Realtime",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#09090B",
+  "theme_color": "#09090B",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
