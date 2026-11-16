@@ -306,7 +306,12 @@ export default function App() {
           return false;
         });
 
-        if (match && (match.status === 'executed' || match.status === 'error')) {
+        if (
+          match &&
+          (match.status === 'executed' ||
+            match.status === 'completed' ||
+            match.status === 'error')
+        ) {
           delete next[fullPath];
           changed = true;
         }
@@ -365,7 +370,7 @@ export default function App() {
             return [row, ...prev];
           });
 
-          if (row.status === 'executed') {
+          if (row.status === 'executed' || row.status === 'completed') {
             triggerHaptic(20);
             setIslandState('done');
             setIslandDetail('Result Received');
