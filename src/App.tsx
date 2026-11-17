@@ -4,7 +4,11 @@ import {
   Sliders,
   Terminal,
   Link2,
-  Palette
+  Palette,
+  Mic,
+  MicOff,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import {
   createNotchXSupabaseClient,
@@ -65,30 +69,52 @@ interface SpeechRecognitionAlternative {
   transcript?: string;
 }
 
-interface SpeechRecognitionResult {
+interface SpeechRecognitionResultItem {
+  isFinal?: boolean;
   [index: number]: SpeechRecognitionAlternative;
 }
 
 interface SpeechRecognitionEventLike {
-  results?: { [index: number]: SpeechRecognitionResult };
+  resultIndex?: number;
+  results?: {
+    length: number;
+    [index: number]: SpeechRecognitionResultItem;
+  };
+}
+
+interface SpeechRecognitionErrorEventLike {
+  error?: string;
+  message?: string;
 }
 
 interface SpeechRecognitionLike {
   lang: string;
   interimResults: boolean;
+  continuous: boolean;
   maxAlternatives: number;
   onstart: (() => void) | null;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
+}
+
+interface NativeSpeechBridge {
+  isAvailable?: () => boolean;
+  startSpeech?: (lang: string) => void;
+}
+
+interface ToastBanner {
+  type: 'success' | 'error';
+  message: string;
 }
 
 declare global {
   interface Window {
     SpeechRecognition?: new () => SpeechRecognitionLike;
     webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+    NotchXVoice?: NativeSpeechBridge;
   }
 }
 
@@ -113,6 +139,8 @@ export default function App() {
   const [promptText, setPromptText] = useState('');
   const [speechLang, setSpeechLang] = useState<'id-ID' | 'en-US'>('id-ID');
   const [isListening, setIsListening] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [toast, setToast] = useState<ToastBanner | null>(null);
 
   const [commands, setCommands] = useState<NotchXCommandRow[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -131,6 +159,23 @@ export default function App() {
   const promptInputRef = useRef<HTMLInputElement | null>(null);
   const lastLocalActionAt = useRef<number>(0);
   const pendingVisionCmdIdRef = useRef<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const transcriptSentRef = useRef<boolean>(false);
+  const latestTranscriptRef = useRef<string>('');
+
+  const showToast = useCallback((type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+    }, 3800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   const markLocalAction = useCallback(() => {
     lastLocalActionAt.current = Date.now();
@@ -252,7 +297,6 @@ export default function App() {
           }
         }
 
-        // Fallback detection if pending vision_scan completed between WS ticks
         if (pendingVisionCmdIdRef.current) {
           const finishedVision = rows.find(
             (r) =>
@@ -304,7 +348,6 @@ export default function App() {
 
     const channel = supabase
       .channel(`notchx-realtime-${activeDeviceId}`)
-      // 1. Live Command Table Sync filtered by target_device
       .on(
         'postgres_changes',
         {
@@ -330,7 +373,6 @@ export default function App() {
           const telemetry = extractTelemetryFromResult(row.result_text);
           if (telemetry) applyRemoteTelemetry(telemetry);
 
-          // Automatically open Vision Result Sheet if this row was our vision_scan
           if (
             (row.command_type === 'vision_scan' ||
               String(row.id) === String(pendingVisionCmdIdRef.current)) &&
@@ -351,7 +393,6 @@ export default function App() {
           }
         }
       )
-      // 2. Live Device State Sync filtered by device_id (notchx_device_state & device_state)
       .on(
         'postgres_changes',
         {
@@ -378,7 +419,6 @@ export default function App() {
           if (rec) applyRemoteTelemetry(rec);
         }
       )
-      // 3. Incoming Vision Results Sync filtered by device_id
       .on(
         'postgres_changes',
         {
@@ -408,7 +448,6 @@ export default function App() {
           });
         }
       )
-      // 4. Optional Direct Broadcast Telemetry Channel
       .on('broadcast', { event: 'device_state' }, ({ payload }) => {
         if (payload) applyRemoteTelemetry(payload as DeviceStateTelemetry);
       })
@@ -497,6 +536,51 @@ export default function App() {
     [supabase, deviceId]
   );
 
+  // Emit final voice transcription to Windows via Supabase
+  const sendFinalVoiceCommand = useCallback(
+    async (transcript: string) => {
+      const clean = transcript.trim();
+      if (!clean) return;
+      setPromptText(clean);
+      const res = await dispatchRemoteCommand('voice_command', {
+        command: 'voice_command',
+        text: clean
+      });
+      if (res) {
+        showToast('success', `Perintah terkirim: ${clean}`);
+      } else {
+        showToast('error', 'Gagal mengirim perintah suara ke Supabase.');
+      }
+    },
+    [dispatchRemoteCommand, showToast]
+  );
+
+  // Listen for native Android SpeechRecognizer events from MainActivity.java
+  useEffect(() => {
+    const onNativeSpeech = (event: Event) => {
+      const custom = event as CustomEvent<{ text?: string; error?: string }>;
+      const detail = custom.detail || {};
+      setIsListening(false);
+      setLiveTranscript('');
+
+      if (detail.text && detail.text.trim()) {
+        void sendFinalVoiceCommand(detail.text);
+      } else if (detail.error && detail.error !== 'cancelled') {
+        if (detail.error === 'permission_required') {
+          showToast('error', 'Izin mikrofon Android diperlukan. Aktifkan izin Mic di Pengaturan.');
+        } else {
+          showToast('error', `Suara gagal dikenali (${detail.error}).`);
+        }
+        setIslandState('connected');
+      } else {
+        setIslandState('connected');
+      }
+    };
+
+    window.addEventListener('notchxNativeSpeechResult', onNativeSpeech);
+    return () => window.removeEventListener('notchxNativeSpeechResult', onNativeSpeech);
+  }, [sendFinalVoiceCommand, showToast]);
+
   // Optimistic Media & Hardware Handlers (0ms UI + 1200ms echo guard)
   const handlePlayPause = () => {
     markLocalAction();
@@ -575,7 +659,8 @@ export default function App() {
     const clean = promptText.trim();
     if (!clean) return;
     setPromptText('');
-    await dispatchRemoteCommand('gemini_prompt', { prompt: clean });
+    const res = await dispatchRemoteCommand('gemini_prompt', { prompt: clean });
+    if (res) showToast('success', `Perintah terkirim: ${clean}`);
   };
 
   const handleThemeSync = async (themeObj: ThemeOption) => {
@@ -585,52 +670,134 @@ export default function App() {
     await dispatchRemoteCommand('theme_sync', { theme: themeObj.id });
   };
 
-  const toggleVoiceRecognition = useCallback(() => {
+  // Multi-tier Voice Recognition (Web Speech API -> Native Android Bridge -> getUserMedia/MediaRecorder Fallback)
+  const toggleVoiceRecognition = useCallback(async () => {
     triggerHaptic(18);
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+      return;
+    }
+
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    if (!SpeechRecognition) {
-      alert('Browser ini belum mendukung Web Speech API. Gunakan Chrome/Edge/Android WebView.');
-      return;
-    }
+    // Tier 1: Standard Web Speech API (Chrome / Edge / modern browsers)
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = speechLang;
+      recognition.interimResults = true;
+      recognition.continuous = false;
+      recognition.maxAlternatives = 1;
 
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-      return;
-    }
+      transcriptSentRef.current = false;
+      latestTranscriptRef.current = '';
 
-    const recognition = new SpeechRecognition();
-    recognition.lang = speechLang;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
+      recognition.onstart = () => {
+        setIsListening(true);
+        setLiveTranscript('');
+        setIslandState('executing');
+      };
 
-    recognition.onstart = () => {
-      setIsListening(true);
-      setIslandState('executing');
-    };
+      recognition.onresult = (event) => {
+        if (!event.results) return;
+        let combined = '';
+        let hasFinal = false;
 
-    recognition.onresult = (event) => {
-      const transcript = event.results?.[0]?.[0]?.transcript?.trim() || '';
-      if (transcript) {
-        setPromptText(transcript);
-        void dispatchRemoteCommand('gemini_prompt', { prompt: transcript });
+        for (let i = 0; i < event.results.length; i++) {
+          const resItem = event.results[i];
+          const textPiece = resItem?.[0]?.transcript || '';
+          combined += textPiece;
+          if (resItem?.isFinal) hasFinal = true;
+        }
+
+        const cleanCombined = combined.trim();
+        latestTranscriptRef.current = cleanCombined;
+        setLiveTranscript(cleanCombined);
+
+        if (hasFinal && cleanCombined && !transcriptSentRef.current) {
+          transcriptSentRef.current = true;
+          setIsListening(false);
+          void sendFinalVoiceCommand(cleanCombined);
+        }
+      };
+
+      recognition.onerror = (errEvt) => {
+        setIsListening(false);
+        setLiveTranscript('');
+        setIslandState('connected');
+        const code = errEvt?.error || 'unknown';
+        if (code === 'not-allowed' || code === 'service-not-allowed') {
+          showToast('error', 'Akses mikrofon ditolak. Izinkan mikrofon pada perangkat Anda.');
+        } else if (code === 'no-speech') {
+          showToast('error', 'Tidak ada suara terdeteksi. Coba bicara lebih dekat.');
+        } else if (code !== 'aborted') {
+          showToast('error', `Error pengenalan suara: ${code}`);
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        const leftover = latestTranscriptRef.current.trim();
+        if (leftover && !transcriptSentRef.current) {
+          transcriptSentRef.current = true;
+          void sendFinalVoiceCommand(leftover);
+        } else if (!transcriptSentRef.current) {
+          setIslandState('connected');
+        }
+        setLiveTranscript('');
+      };
+
+      recognitionRef.current = recognition;
+      try {
+        recognition.start();
+      } catch {
+        setIsListening(false);
+        showToast('error', 'Gagal memulai pengenalan suara Web Speech.');
       }
-    };
+      return;
+    }
 
-    recognition.onerror = () => {
-      setIsListening(false);
-      setIslandState('connected');
-    };
+    // Tier 2: Capacitor Android Native Speech Bridge (MainActivity.java)
+    if (window.NotchXVoice?.startSpeech) {
+      setIsListening(true);
+      setLiveTranscript('');
+      setIslandState('executing');
+      window.NotchXVoice.startSpeech(speechLang);
+      return;
+    }
 
-    recognition.onend = () => {
-      setIsListening(false);
-    };
+    // Tier 3: WebView / Browser fallback via getUserMedia + MediaRecorder permission check
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const hasRecorder = typeof MediaRecorder !== 'undefined';
+        if (hasRecorder) {
+          const recorder = new MediaRecorder(stream);
+          recorder.start();
+          window.setTimeout(() => {
+            if (recorder.state !== 'inactive') recorder.stop();
+            stream.getTracks().forEach((t) => t.stop());
+          }, 300);
+        } else {
+          stream.getTracks().forEach((t) => t.stop());
+        }
+        showToast(
+          'error',
+          'Mikrofon aktif, tetapi WebView ini belum mendukung transkripsi teks otomatis. Gunakan aplikasi Android NotchX terbaru atau ketik perintah.'
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Izin mikrofon ditolak';
+        showToast('error', `Akses mikrofon diblokir: ${msg}`);
+      }
+      return;
+    }
 
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [isListening, speechLang, dispatchRemoteCommand]);
+    showToast('error', 'Perangkat/browser ini tidak mendukung fitur mikrofon.');
+  }, [isListening, speechLang, sendFinalVoiceCommand, showToast]);
 
   // Register Android Widget Deep Links (notchx://voice & notchx://files)
   useEffect(() => {
@@ -638,7 +805,7 @@ export default function App() {
       onVoiceTrigger: () => {
         setActiveTab('command');
         window.setTimeout(() => {
-          toggleVoiceRecognition();
+          void toggleVoiceRecognition();
         }, 250);
       },
       onFileSearchTrigger: () => {
@@ -684,7 +851,6 @@ export default function App() {
       <header className="sticky top-0 z-40 bg-[#09090B]/95 backdrop-blur-md border-b border-[#27272A] pt-safe">
         <div className="h-14 px-4 flex items-center justify-between max-w-md mx-auto">
           <div className="flex items-center gap-2.5 min-w-0">
-            {/* Compact Living NotchX Mark */}
             <div className="w-8 h-8 rounded-xl bg-[#121215] border border-[#27272A] flex items-center justify-center gap-1 shrink-0">
               <span
                 className="nx-eye w-1.5 h-2 rounded-full inline-block"
@@ -729,7 +895,21 @@ export default function App() {
             </div>
           </div>
 
+          {/* Right Quick Actions: Voice Trigger, Theme, Pair */}
           <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => void toggleVoiceRecognition()}
+              aria-label="Quick Voice Command"
+              className={`w-9 h-9 rounded-xl border flex items-center justify-center active:scale-95 transition-all ${
+                isListening
+                  ? 'bg-[#E5C158] border-[#E5C158] text-[#09090B] animate-pulse shadow-[0_0_16px_rgba(229,193,88,0.55)]'
+                  : 'bg-[#121215] border-[#27272A] text-[#E5C158] hover:border-[#E5C158]/60'
+              }`}
+            >
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -757,7 +937,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Optional Quick Theme Strip */}
+        {/* Quick Theme Strip */}
         {showThemeBar && (
           <div className="px-4 pb-3 pt-1 border-t border-[#27272A]/60 max-w-md mx-auto grid grid-cols-5 gap-1.5">
             {THEMES.map((t) => {
@@ -786,6 +966,49 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {/* FLOATING LISTENING / TOAST BANNER (Zero tap blockage) */}
+      {(isListening || toast) && (
+        <div className="fixed top-16 inset-x-0 z-40 px-4 pt-2 flex justify-center pointer-events-none">
+          {isListening ? (
+            <div className="w-full max-w-md rounded-2xl bg-[#121215]/95 backdrop-blur-md border border-[#E5C158] px-4 py-3 flex items-center justify-between gap-3 shadow-[0_0_24px_-4px_rgba(229,193,88,0.45)] pointer-events-auto">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#E5C158] animate-ping shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-[#E5C158]">
+                    Mendengarkan ({speechLang})...
+                  </div>
+                  <div className="text-xs text-[#FAFAFA] truncate">
+                    {liveTranscript || 'Ucapkan perintah suara ke laptop...'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void toggleVoiceRecognition()}
+                className="px-2.5 py-1 rounded-lg bg-[#E5C158] text-[#09090B] font-mono text-[10px] font-bold uppercase shrink-0"
+              >
+                Stop
+              </button>
+            </div>
+          ) : toast ? (
+            <div
+              className={`w-full max-w-md rounded-2xl backdrop-blur-md px-4 py-2.5 flex items-center gap-2.5 shadow-xl pointer-events-auto border ${
+                toast.type === 'success'
+                  ? 'bg-[#121215]/95 border-[#E5C158]/70 text-[#FAFAFA]'
+                  : 'bg-[#181012]/95 border-rose-500/60 text-rose-200'
+              }`}
+            >
+              {toast.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-[#E5C158] shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span className="text-xs font-medium truncate">{toast.message}</span>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* SCROLLABLE CONTENT AREA */}
       <main className="flex-1 overflow-y-auto px-4 pt-3 pb-24 w-full max-w-md mx-auto">
@@ -875,6 +1098,7 @@ export default function App() {
             promptText={promptText}
             speechLang={speechLang}
             isListening={isListening}
+            liveTranscript={liveTranscript}
             isScanningVision={isScanningVision}
             accentHex={activeTheme.hex}
             inputRef={promptInputRef}
@@ -886,7 +1110,7 @@ export default function App() {
               triggerHaptic(8);
               setSpeechLang((l) => (l === 'id-ID' ? 'en-US' : 'id-ID'));
             }}
-            onToggleVoice={toggleVoiceRecognition}
+            onToggleVoice={() => void toggleVoiceRecognition()}
             onSubmit={(e) => void handleSendPrompt(e)}
             onOpenClipboard={() => {
               triggerHaptic(10);

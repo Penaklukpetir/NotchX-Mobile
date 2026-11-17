@@ -69,9 +69,8 @@ export const MediaPlayerCard: React.FC<MediaPlayerCardProps> = ({
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-[#201F22] via-[#121215] to-[#09090B] flex items-center justify-center">
               <Disc3
-                className={`w-16 h-16 text-[#E5C158] ${
-                  media.isPlaying ? 'animate-spin' : 'opacity-80'
-                }`}
+                className={`w-16 h-16 text-[#E5C158] ${media.isPlaying ? 'animate-spin' : 'opacity-80'
+                  }`}
                 style={{ animationDuration: '6s' }}
               />
             </div>
@@ -142,9 +141,8 @@ export const MediaPlayerCard: React.FC<MediaPlayerCardProps> = ({
             type="button"
             onClick={onToggleShuffle}
             aria-label="Shuffle"
-            className={`w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-all ${
-              media.shuffle ? 'text-[#E5C158] bg-[#E5C158]/10' : 'text-[#A1A1AA] hover:text-[#FAFAFA]'
-            }`}
+            className={`w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-all ${media.shuffle ? 'text-[#E5C158] bg-[#E5C158]/10' : 'text-[#A1A1AA] hover:text-[#FAFAFA]'
+              }`}
           >
             <Shuffle className="w-[18px] h-[18px]" />
           </button>
@@ -190,9 +188,8 @@ export const MediaPlayerCard: React.FC<MediaPlayerCardProps> = ({
             type="button"
             onClick={onToggleRepeat}
             aria-label="Repeat"
-            className={`w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-all ${
-              media.repeat ? 'text-[#E5C158] bg-[#E5C158]/10' : 'text-[#A1A1AA] hover:text-[#FAFAFA]'
-            }`}
+            className={`w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-all ${media.repeat ? 'text-[#E5C158] bg-[#E5C158]/10' : 'text-[#A1A1AA] hover:text-[#FAFAFA]'
+              }`}
           >
             <Repeat className="w-[18px] h-[18px]" />
           </button>

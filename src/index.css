@@ -8,6 +8,7 @@
 }
 
 @layer base {
+
   html,
   body {
     width: 100%;
@@ -58,9 +59,13 @@
 }
 
 @keyframes nx-eyes-blink {
-  0%, 92%, 100% {
+
+  0%,
+  92%,
+  100% {
     transform: scaleY(1);
   }
+
   96% {
     transform: scaleY(0.12);
   }
@@ -71,9 +76,12 @@
 }
 
 @keyframes nx-eq-bar {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scaleY(0.35);
   }
+
   50% {
     transform: scaleY(1);
   }
@@ -85,6 +93,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .nx-eye,
   .nx-eq-bar {
     animation: none !important;

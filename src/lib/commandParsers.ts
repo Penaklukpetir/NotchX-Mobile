@@ -68,8 +68,8 @@ export function parseStructuredResult(resultText?: string | null): StructuredRes
       const rawFiles = Array.isArray(data.files)
         ? data.files
         : Array.isArray(data.results)
-        ? data.results
-        : [];
+          ? data.results
+          : [];
       const files = rawFiles.map((raw) => {
         const f = (raw || {}) as Record<string, string | undefined>;
         return {
@@ -122,27 +122,27 @@ export function extractTelemetryFromResult(
       typeof data.albumArt === 'string'
         ? data.albumArt
         : typeof data.album_art === 'string'
-        ? data.album_art
-        : undefined,
+          ? data.album_art
+          : undefined,
     source: typeof data.source === 'string' ? data.source : undefined,
     is_playing:
       typeof data.isPlaying === 'boolean'
         ? data.isPlaying
         : typeof data.is_playing === 'boolean'
-        ? data.is_playing
-        : undefined,
+          ? data.is_playing
+          : undefined,
     active_lyric:
       typeof data.currentLyric === 'string'
         ? data.currentLyric
         : typeof data.active_lyric === 'string'
-        ? data.active_lyric
-        : undefined,
+          ? data.active_lyric
+          : undefined,
     next_lyric:
       typeof data.nextLyric === 'string'
         ? data.nextLyric
         : typeof data.next_lyric === 'string'
-        ? data.next_lyric
-        : undefined,
+          ? data.next_lyric
+          : undefined,
     volume: typeof data.volume === 'number' ? data.volume : undefined,
     brightness: typeof data.brightness === 'number' ? data.brightness : undefined,
     is_muted: typeof data.is_muted === 'boolean' ? data.is_muted : undefined,

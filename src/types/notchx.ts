@@ -25,16 +25,16 @@ export interface FileSuggestion {
 
 export type StructuredResult =
   | {
-      kind: 'file_suggestions';
-      query: string;
-      files: FileSuggestion[];
-    }
+    kind: 'file_suggestions';
+    query: string;
+    files: FileSuggestion[];
+  }
   | {
-      kind: 'file_ready';
-      fileName: string;
-      sizeFormatted: string;
-      downloadUrl: string;
-    };
+    kind: 'file_ready';
+    fileName: string;
+    sizeFormatted: string;
+    downloadUrl: string;
+  };
 
 export interface MediaState {
   title: string;

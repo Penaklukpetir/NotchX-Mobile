@@ -47,9 +47,8 @@ export const QuickActionsGrid: React.FC<QuickActionsGridProps> = ({
           PC Hardware Controls
         </span>
         <span
-          className={`font-mono text-[10px] font-semibold uppercase ${
-            isConnected ? 'text-[#10B981]' : 'text-[#A1A1AA]'
-          }`}
+          className={`font-mono text-[10px] font-semibold uppercase ${isConnected ? 'text-[#10B981]' : 'text-[#A1A1AA]'
+            }`}
         >
           {isConnected ? 'Live · Ready' : 'Standby'}
         </span>
@@ -61,34 +60,30 @@ export const QuickActionsGrid: React.FC<QuickActionsGridProps> = ({
         <button
           type="button"
           onClick={onMicToggle}
-          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${
-            isMicMuted
+          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${isMicMuted
               ? 'bg-[#E5C158]/15 border-[#E5C158]/60 shadow-[0_0_20px_-4px_rgba(229,193,88,0.28)]'
               : 'bg-[#121215] border-[#27272A] hover:border-[#3F3F46]'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between w-full">
             <div
-              className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
-                isMicMuted
+              className={`w-9 h-9 rounded-xl flex items-center justify-center border ${isMicMuted
                   ? 'bg-[#E5C158] text-[#09090B] border-[#E5C158]'
                   : 'bg-[#1C1B1D] border-[#27272A] text-[#10B981]'
-              }`}
+                }`}
             >
               {isMicMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             </div>
             <span
-              className={`w-2 h-2 rounded-full ${
-                isMicMuted ? 'bg-[#E5C158]' : 'bg-[#10B981] animate-pulse'
-              }`}
+              className={`w-2 h-2 rounded-full ${isMicMuted ? 'bg-[#E5C158]' : 'bg-[#10B981] animate-pulse'
+                }`}
             />
           </div>
           <div className="flex flex-col mt-2">
             <span className="text-sm font-semibold text-[#FAFAFA]">Mic Toggle</span>
             <span
-              className={`font-mono text-[10px] font-semibold uppercase ${
-                isMicMuted ? 'text-[#E5C158]' : 'text-[#10B981]'
-              }`}
+              className={`font-mono text-[10px] font-semibold uppercase ${isMicMuted ? 'text-[#E5C158]' : 'text-[#10B981]'
+                }`}
             >
               {isMicMuted ? 'MIC MUTED' : 'MIC LIVE'}
             </span>
@@ -100,11 +95,10 @@ export const QuickActionsGrid: React.FC<QuickActionsGridProps> = ({
           type="button"
           onClick={onVisionScan}
           disabled={isScanningVision}
-          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${
-            isScanningVision
+          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${isScanningVision
               ? 'bg-[#E5C158]/20 border-[#E5C158] shadow-[0_0_24px_-4px_rgba(229,193,88,0.4)]'
               : 'bg-[#121215] border-[#E5C158]/40 hover:border-[#E5C158]/80'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between w-full">
             <div
@@ -135,19 +129,17 @@ export const QuickActionsGrid: React.FC<QuickActionsGridProps> = ({
         <button
           type="button"
           onClick={onMuteToggle}
-          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${
-            isMuted
+          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${isMuted
               ? 'bg-[#E5C158]/15 border-[#E5C158]/60 shadow-[0_0_20px_-4px_rgba(229,193,88,0.25)]'
               : 'bg-[#121215] border-[#27272A] hover:border-[#3F3F46]'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between w-full">
             <div
-              className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
-                isMuted
+              className={`w-9 h-9 rounded-xl flex items-center justify-center border ${isMuted
                   ? 'bg-[#E5C158] text-[#09090B] border-[#E5C158]'
                   : 'bg-[#1C1B1D] border-[#27272A] text-[#E5C158]'
-              }`}
+                }`}
             >
               {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </div>
@@ -156,9 +148,8 @@ export const QuickActionsGrid: React.FC<QuickActionsGridProps> = ({
           <div className="flex flex-col mt-2">
             <span className="text-sm font-semibold text-[#FAFAFA]">Mute Audio</span>
             <span
-              className={`font-mono text-[10px] uppercase ${
-                isMuted ? 'text-[#E5C158] font-semibold' : 'text-[#A1A1AA]'
-              }`}
+              className={`font-mono text-[10px] uppercase ${isMuted ? 'text-[#E5C158] font-semibold' : 'text-[#A1A1AA]'
+                }`}
             >
               {isMuted ? 'AUDIO MUTED' : 'SYSTEM SOUND'}
             </span>
@@ -169,11 +160,10 @@ export const QuickActionsGrid: React.FC<QuickActionsGridProps> = ({
         <button
           type="button"
           onClick={onNotchMiniPill}
-          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${
-            miniPillActive
+          className={`relative z-10 min-h-[86px] rounded-2xl p-3.5 flex flex-col justify-between text-left transition-all active:scale-95 border ${miniPillActive
               ? 'bg-[#E5C158]/15 border-[#E5C158]/60'
               : 'bg-[#121215] border-[#27272A] hover:border-[#3F3F46]'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between w-full">
             <div className="w-9 h-9 rounded-xl bg-[#1C1B1D] border border-[#27272A] flex items-center justify-center text-[#FFE08B]">
