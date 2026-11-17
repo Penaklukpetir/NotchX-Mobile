@@ -51,9 +51,31 @@ export interface MediaState {
   repeat: boolean;
 }
 
+export interface VisionResultData {
+  id: string;
+  screenshotUrl?: string;
+  explanation: string;
+  createdAt?: string;
+}
+
+export interface DeviceStateTelemetry {
+  is_playing?: boolean;
+  title?: string;
+  artist?: string;
+  album_art?: string;
+  source?: string;
+  active_lyric?: string;
+  next_lyric?: string;
+  volume?: number;
+  brightness?: number;
+  is_muted?: boolean;
+  mic_muted?: boolean;
+  mini_pill?: boolean;
+}
+
 export type IslandStatus = 'connected' | 'executing' | 'done' | 'unconfigured' | 'offline';
 
-export type NavTab = 'island' | 'audio' | 'stats' | 'actions';
+export type NavTab = 'media' | 'remote' | 'command';
 
 export function triggerHaptic(ms = 12): void {
   if (typeof navigator !== 'undefined' && navigator.vibrate) {

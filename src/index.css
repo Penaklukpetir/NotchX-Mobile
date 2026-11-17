@@ -11,13 +11,19 @@
   html,
   body {
     width: 100%;
+    min-height: 100dvh;
     margin: 0;
     padding: 0;
     background-color: #09090B;
-    color: #E5E1E4;
-    overscroll-behavior-y: none;
+    color: #FAFAFA;
     overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     -webkit-tap-highlight-color: transparent;
+  }
+
+  #root {
+    min-height: 100dvh;
   }
 
   ::-webkit-scrollbar {

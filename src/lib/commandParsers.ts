@@ -7,7 +7,7 @@ import {
   File,
   type LucideIcon
 } from 'lucide-react';
-import type { StructuredResult, MediaState } from '../types/notchx';
+import type { StructuredResult, DeviceStateTelemetry, VisionResultData } from '../types/notchx';
 
 export function formatPayloadText(payload: unknown): string {
   if (!payload) return '';
@@ -102,21 +102,88 @@ export function parseStructuredResult(resultText?: string | null): StructuredRes
   return null;
 }
 
-export function extractMediaUpdateFromResult(
+export function extractTelemetryFromResult(
   resultText?: string | null
-): Partial<MediaState> | null {
-  if (!resultText || !resultText.includes('__NOTCHX_MEDIA_STATE__')) return null;
-  const data = extractJsonObjectAfterMarker(resultText, '__NOTCHX_MEDIA_STATE__');
+): DeviceStateTelemetry | null {
+  if (!resultText) return null;
+  if (!resultText.includes('__NOTCHX_MEDIA_STATE__') && !resultText.includes('__NOTCHX_DEVICE_STATE__')) {
+    return null;
+  }
+  const marker = resultText.includes('__NOTCHX_DEVICE_STATE__')
+    ? '__NOTCHX_DEVICE_STATE__'
+    : '__NOTCHX_MEDIA_STATE__';
+  const data = extractJsonObjectAfterMarker(resultText, marker);
   if (!data) return null;
 
   return {
     title: typeof data.title === 'string' ? data.title : undefined,
     artist: typeof data.artist === 'string' ? data.artist : undefined,
-    albumArt: typeof data.albumArt === 'string' ? data.albumArt : undefined,
+    album_art:
+      typeof data.albumArt === 'string'
+        ? data.albumArt
+        : typeof data.album_art === 'string'
+        ? data.album_art
+        : undefined,
     source: typeof data.source === 'string' ? data.source : undefined,
-    isPlaying: typeof data.isPlaying === 'boolean' ? data.isPlaying : undefined,
-    currentLyric: typeof data.currentLyric === 'string' ? data.currentLyric : undefined,
-    nextLyric: typeof data.nextLyric === 'string' ? data.nextLyric : undefined
+    is_playing:
+      typeof data.isPlaying === 'boolean'
+        ? data.isPlaying
+        : typeof data.is_playing === 'boolean'
+        ? data.is_playing
+        : undefined,
+    active_lyric:
+      typeof data.currentLyric === 'string'
+        ? data.currentLyric
+        : typeof data.active_lyric === 'string'
+        ? data.active_lyric
+        : undefined,
+    next_lyric:
+      typeof data.nextLyric === 'string'
+        ? data.nextLyric
+        : typeof data.next_lyric === 'string'
+        ? data.next_lyric
+        : undefined,
+    volume: typeof data.volume === 'number' ? data.volume : undefined,
+    brightness: typeof data.brightness === 'number' ? data.brightness : undefined,
+    is_muted: typeof data.is_muted === 'boolean' ? data.is_muted : undefined,
+    mic_muted: typeof data.mic_muted === 'boolean' ? data.mic_muted : undefined,
+    mini_pill: typeof data.mini_pill === 'boolean' ? data.mini_pill : undefined
+  };
+}
+
+export function extractVisionResult(
+  cmdId: string,
+  resultText?: string | null,
+  createdAt?: string
+): VisionResultData | null {
+  if (!resultText || typeof resultText !== 'string') return null;
+
+  if (resultText.includes('__NOTCHX_VISION_RESULT__')) {
+    const data = extractJsonObjectAfterMarker(resultText, '__NOTCHX_VISION_RESULT__');
+    if (data) {
+      const screenshotUrl =
+        (typeof data.screenshot_url === 'string' && data.screenshot_url) ||
+        (typeof data.imageUrl === 'string' && data.imageUrl) ||
+        (typeof data.image_url === 'string' && data.image_url) ||
+        undefined;
+      const explanation =
+        (typeof data.explanation === 'string' && data.explanation) ||
+        (typeof data.analysis === 'string' && data.analysis) ||
+        (typeof data.summary === 'string' && data.summary) ||
+        resultText;
+      return {
+        id: cmdId,
+        screenshotUrl,
+        explanation,
+        createdAt
+      };
+    }
+  }
+
+  return {
+    id: cmdId,
+    explanation: resultText,
+    createdAt
   };
 }
 

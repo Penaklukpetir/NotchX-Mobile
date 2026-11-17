@@ -1,16 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  ArrowUp,
-  AudioWaveform,
-  Clipboard,
-  Cpu,
-  LayoutGrid,
+  Disc3,
+  Sliders,
+  Terminal,
   Link2,
-  Maximize2,
-  Mic,
-  MicOff,
-  Palette,
-  Smartphone
+  Palette
 } from 'lucide-react';
 import {
   createNotchXSupabaseClient,
@@ -21,12 +15,16 @@ import {
   syncWidgetCredentials,
   registerWidgetDeepLinks
 } from './lib/widgetBridge';
-import { extractMediaUpdateFromResult } from './lib/commandParsers';
+import {
+  extractTelemetryFromResult,
+  extractVisionResult
+} from './lib/commandParsers';
 import { MediaPlayerCard } from './components/MediaPlayerCard';
 import { TelemetrySliders } from './components/TelemetrySliders';
 import { QuickActionsGrid } from './components/QuickActionsGrid';
-import { CommandFeed } from './components/CommandFeed';
+import { CommandTab } from './components/CommandTab';
 import { PairingModal, ClipboardModal, LockConfirmModal } from './components/Modals';
+import { VisionResultModal } from './components/VisionResultModal';
 import {
   triggerHaptic,
   type ThemeOption,
@@ -34,7 +32,9 @@ import {
   type FileSuggestion,
   type MediaState,
   type IslandStatus,
-  type NavTab
+  type NavTab,
+  type VisionResultData,
+  type DeviceStateTelemetry
 } from './types/notchx';
 
 const THEMES: ThemeOption[] = [
@@ -48,16 +48,18 @@ const THEMES: ThemeOption[] = [
 const INITIAL_MEDIA: MediaState = {
   title: 'Windows Media Sync',
   artist: 'Ready for Playback Control',
-  source: 'WinAudio',
+  source: 'SPOTIFY',
   isPlaying: false,
   progress: 42,
   elapsedSec: 102,
   durationSec: 218,
   currentLyric: '“Tap Play or control Windows audio directly from NotchX...”',
-  nextLyric: 'Live track telemetry & synchronized lyrics sync automatically',
+  nextLyric: 'Live track telemetry & synchronized lyrics appear here',
   shuffle: false,
   repeat: false
 };
+
+const LOCAL_ECHO_LOCKOUT_MS = 1200;
 
 interface SpeechRecognitionAlternative {
   transcript?: string;
@@ -93,16 +95,20 @@ declare global {
 export default function App() {
   const [supabase, setSupabase] = useState(() => createNotchXSupabaseClient());
   const [islandState, setIslandState] = useState<IslandStatus>('connected');
-  const [islandDetail, setIslandDetail] = useState('Desktop Linked');
-  const [islandExpanded, setIslandExpanded] = useState(false);
-  const [miniPillActive, setMiniPillActive] = useState(false);
+  const [realtimeLive, setRealtimeLive] = useState(false);
+  const [showThemeBar, setShowThemeBar] = useState(false);
   const [activeTheme, setActiveTheme] = useState<ThemeOption>(THEMES[0]);
-  const [activeTab, setActiveTab] = useState<NavTab>('island');
+  const [activeTab, setActiveTab] = useState<NavTab>('media');
 
   const [media, setMedia] = useState<MediaState>(INITIAL_MEDIA);
   const [volume, setVolume] = useState(68);
   const [brightness, setBrightness] = useState(85);
   const [isMuted, setIsMuted] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [miniPillActive, setMiniPillActive] = useState(false);
+
+  const [isScanningVision, setIsScanningVision] = useState(false);
+  const [visionResult, setVisionResult] = useState<VisionResultData | null>(null);
 
   const [promptText, setPromptText] = useState('');
   const [speechLang, setSpeechLang] = useState<'id-ID' | 'en-US'>('id-ID');
@@ -123,14 +129,45 @@ export default function App() {
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const promptInputRef = useRef<HTMLInputElement | null>(null);
+  const lastLocalActionAt = useRef<number>(0);
+  const pendingVisionCmdIdRef = useRef<string | null>(null);
 
-  // Sync dynamic accent CSS vars
+  const markLocalAction = useCallback(() => {
+    lastLocalActionAt.current = Date.now();
+  }, []);
+
+  const applyRemoteTelemetry = useCallback((telemetry: DeviceStateTelemetry) => {
+    const withinLockout = Date.now() - lastLocalActionAt.current < LOCAL_ECHO_LOCKOUT_MS;
+
+    setMedia((prev) => ({
+      ...prev,
+      title: telemetry.title ?? prev.title,
+      artist: telemetry.artist ?? prev.artist,
+      albumArt: telemetry.album_art ?? prev.albumArt,
+      source: telemetry.source ?? prev.source,
+      currentLyric: telemetry.active_lyric ?? prev.currentLyric,
+      nextLyric: telemetry.next_lyric ?? prev.nextLyric,
+      isPlaying: !withinLockout && telemetry.is_playing !== undefined
+        ? telemetry.is_playing
+        : prev.isPlaying
+    }));
+
+    if (!withinLockout) {
+      if (typeof telemetry.volume === 'number') setVolume(telemetry.volume);
+      if (typeof telemetry.brightness === 'number') setBrightness(telemetry.brightness);
+      if (typeof telemetry.is_muted === 'boolean') setIsMuted(telemetry.is_muted);
+      if (typeof telemetry.mic_muted === 'boolean') setIsMicMuted(telemetry.mic_muted);
+      if (typeof telemetry.mini_pill === 'boolean') setMiniPillActive(telemetry.mini_pill);
+    }
+  }, []);
+
+  // Sync dynamic accent CSS variables
   useEffect(() => {
     document.documentElement.style.setProperty('--nx-accent', activeTheme.hex);
     document.documentElement.style.setProperty('--nx-accent-rgb', activeTheme.rgb);
   }, [activeTheme]);
 
-  // Smooth local playback timer when Playing is toggled active
+  // Smooth local track progress tick when playing
   useEffect(() => {
     if (!media.isPlaying) return;
     const timer = window.setInterval(() => {
@@ -149,7 +186,7 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [media.isPlaying]);
 
-  // Automatically clear uploadingFiles spinner when fetch_file row completes
+  // Clear file upload spinners automatically when fetch_file completes
   useEffect(() => {
     setUploadingFiles((prev) => {
       const entries = Object.entries(prev);
@@ -206,56 +243,79 @@ export default function App() {
       if (!error && Array.isArray(data)) {
         const rows = data as NotchXCommandRow[];
         setCommands(rows);
+
         for (const row of rows) {
-          const mediaPatch = extractMediaUpdateFromResult(row.result_text);
-          if (mediaPatch) {
-            setMedia((prev) => ({
-              ...prev,
-              ...Object.fromEntries(
-                Object.entries(mediaPatch).filter(([, v]) => v !== undefined)
-              )
-            }));
+          const telemetry = extractTelemetryFromResult(row.result_text);
+          if (telemetry) {
+            applyRemoteTelemetry(telemetry);
             break;
+          }
+        }
+
+        // Fallback detection if pending vision_scan completed between WS ticks
+        if (pendingVisionCmdIdRef.current) {
+          const finishedVision = rows.find(
+            (r) =>
+              String(r.id) === String(pendingVisionCmdIdRef.current) &&
+              (r.status === 'executed' || r.status === 'completed' || r.status === 'error')
+          );
+          if (finishedVision) {
+            pendingVisionCmdIdRef.current = null;
+            setIsScanningVision(false);
+            if (finishedVision.status !== 'error' && finishedVision.result_text) {
+              const parsed = extractVisionResult(
+                String(finishedVision.id),
+                finishedVision.result_text,
+                finishedVision.created_at
+              );
+              if (parsed) setVisionResult(parsed);
+            }
           }
         }
       }
     },
-    [deviceId]
+    [deviceId, applyRemoteTelemetry]
   );
 
-  // Sync credentials on mount + connect Supabase Realtime + 3s poll fallback
+  // Startup credential sync + Instant Supabase Realtime WebSocket Subscriptions
   useEffect(() => {
     const creds = getStoredCredentials();
     setSettingsUrl(creds.url);
     setSettingsKey(creds.anonKey);
-    setDeviceId(creds.deviceId || 'windows');
+    const activeDeviceId = creds.deviceId || 'windows';
+    setDeviceId(activeDeviceId);
 
     void syncWidgetCredentials({
       supabaseUrl: creds.url,
       supabaseAnonKey: creds.anonKey,
-      deviceId: creds.deviceId || 'windows',
-      deviceName: creds.deviceId || 'windows',
+      deviceId: activeDeviceId,
+      deviceName: activeDeviceId,
       userId: 'default_user'
     });
 
     if (!supabase) {
       setIslandState('unconfigured');
-      setIslandDetail('Pair Device Needed');
+      setRealtimeLive(false);
       return;
     }
 
     setIslandState('connected');
-    setIslandDetail('Desktop Linked');
     void fetchRecentCommands(supabase);
 
     const channel = supabase
-      .channel('notchx-mobile-live')
+      .channel(`notchx-realtime-${activeDeviceId}`)
+      // 1. Live Command Table Sync filtered by target_device
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'notchx_commands' },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notchx_commands',
+          filter: `target_device=eq.${activeDeviceId}`
+        },
         (payload) => {
           const row = payload.new as NotchXCommandRow | undefined;
-          if (!row || row.target_device !== (creds.deviceId || 'windows')) return;
+          if (!row) return;
 
           setCommands((prev) => {
             const exists = prev.some((item) => String(item.id) === String(row.id));
@@ -267,44 +327,108 @@ export default function App() {
             return [row, ...prev];
           });
 
-          const mediaPatch = extractMediaUpdateFromResult(row.result_text);
-          if (mediaPatch) {
-            setMedia((prev) => ({
-              ...prev,
-              ...Object.fromEntries(
-                Object.entries(mediaPatch).filter(([, v]) => v !== undefined)
-              )
-            }));
+          const telemetry = extractTelemetryFromResult(row.result_text);
+          if (telemetry) applyRemoteTelemetry(telemetry);
+
+          // Automatically open Vision Result Sheet if this row was our vision_scan
+          if (
+            (row.command_type === 'vision_scan' ||
+              String(row.id) === String(pendingVisionCmdIdRef.current)) &&
+            (row.status === 'executed' || row.status === 'completed' || row.status === 'error')
+          ) {
+            pendingVisionCmdIdRef.current = null;
+            setIsScanningVision(false);
+            if (row.status !== 'error' && row.result_text) {
+              const parsed = extractVisionResult(String(row.id), row.result_text, row.created_at);
+              if (parsed) setVisionResult(parsed);
+            }
           }
 
           if (row.status === 'executed' || row.status === 'completed') {
-            triggerHaptic(20);
+            triggerHaptic(18);
             setIslandState('done');
-            setIslandDetail('Synced');
-            window.setTimeout(() => {
-              setIslandState('connected');
-              setIslandDetail('Desktop Linked');
-            }, 2400);
-          } else if (row.status === 'error') {
-            setIslandState('connected');
-            setIslandDetail('Command Error');
+            window.setTimeout(() => setIslandState('connected'), 1800);
           }
         }
       )
-      .subscribe();
+      // 2. Live Device State Sync filtered by device_id (notchx_device_state & device_state)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notchx_device_state',
+          filter: `device_id=eq.${activeDeviceId}`
+        },
+        (payload) => {
+          const rec = payload.new as DeviceStateTelemetry | undefined;
+          if (rec) applyRemoteTelemetry(rec);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'device_state',
+          filter: `device_id=eq.${activeDeviceId}`
+        },
+        (payload) => {
+          const rec = payload.new as DeviceStateTelemetry | undefined;
+          if (rec) applyRemoteTelemetry(rec);
+        }
+      )
+      // 3. Incoming Vision Results Sync filtered by device_id
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'vision_results',
+          filter: `device_id=eq.${activeDeviceId}`
+        },
+        (payload) => {
+          const rec = payload.new as Record<string, unknown> | undefined;
+          if (!rec) return;
+          pendingVisionCmdIdRef.current = null;
+          setIsScanningVision(false);
+          triggerHaptic(22);
+          setVisionResult({
+            id: String(rec.id || Date.now()),
+            screenshotUrl:
+              (rec.screenshot_url as string) ||
+              (rec.image_url as string) ||
+              undefined,
+            explanation:
+              (rec.explanation as string) ||
+              (rec.analysis as string) ||
+              (rec.result_text as string) ||
+              'Screen analysis complete.',
+            createdAt: rec.created_at as string | undefined
+          });
+        }
+      )
+      // 4. Optional Direct Broadcast Telemetry Channel
+      .on('broadcast', { event: 'device_state' }, ({ payload }) => {
+        if (payload) applyRemoteTelemetry(payload as DeviceStateTelemetry);
+      })
+      .subscribe((status) => {
+        setRealtimeLive(status === 'SUBSCRIBED');
+      });
 
     const pollInterval = window.setInterval(() => {
       void fetchRecentCommands(supabase);
-    }, 3000);
+    }, 3500);
 
     return () => {
+      setRealtimeLive(false);
       window.clearInterval(pollInterval);
       void supabase.removeChannel(channel);
     };
-  }, [supabase, fetchRecentCommands]);
+  }, [supabase, fetchRecentCommands, applyRemoteTelemetry]);
 
   const dispatchRemoteCommand = useCallback(
-    async (commandType: string, payloadInput: unknown, labelPreview?: string) => {
+    async (commandType: string, payloadInput: unknown) => {
       triggerHaptic(14);
       if (!supabase) {
         setShowPairingModal(true);
@@ -313,7 +437,6 @@ export default function App() {
 
       const targetDevice = (deviceId || 'windows').trim();
       setIslandState('executing');
-      setIslandDetail(labelPreview || 'Sending...');
 
       const structuredPayload =
         typeof payloadInput === 'object' && payloadInput !== null
@@ -361,7 +484,6 @@ export default function App() {
           )
         );
         setIslandState('connected');
-        setIslandDetail('Send Failed');
         return null;
       }
 
@@ -375,19 +497,67 @@ export default function App() {
     [supabase, deviceId]
   );
 
+  // Optimistic Media & Hardware Handlers (0ms UI + 1200ms echo guard)
+  const handlePlayPause = () => {
+    markLocalAction();
+    setMedia((prev) => ({ ...prev, isPlaying: !prev.isPlaying }));
+    void dispatchRemoteCommand('media_control', { action: 'play_pause' });
+  };
+
+  const handlePrevTrack = () => {
+    markLocalAction();
+    void dispatchRemoteCommand('media_control', { action: 'previous' });
+  };
+
+  const handleNextTrack = () => {
+    markLocalAction();
+    void dispatchRemoteCommand('media_control', { action: 'next' });
+  };
+
+  const handleMicToggle = () => {
+    markLocalAction();
+    setIsMicMuted((prev) => !prev);
+    void dispatchRemoteCommand('media_control', { action: 'toggle_mic' });
+  };
+
+  const handleMuteToggle = () => {
+    markLocalAction();
+    setIsMuted((prev) => !prev);
+    void dispatchRemoteCommand('media_control', { action: 'mute' });
+  };
+
+  const handleNotchMiniPill = () => {
+    markLocalAction();
+    setMiniPillActive((prev) => !prev);
+    void dispatchRemoteCommand('toggle_mini_pill', {
+      action: 'toggle_mini_pill',
+      prompt: 'Show a NotchX Remote Mini-Pill alert banner saying "Synced from Phone"'
+    });
+  };
+
+  const handleVisionScan = async () => {
+    triggerHaptic(16);
+    setIsScanningVision(true);
+    const inserted = await dispatchRemoteCommand('vision_scan', {
+      action: 'vision_scan',
+      prompt: 'Analyze my current laptop screen and explain in Indonesian what is visible right now'
+    });
+    if (inserted?.id) {
+      pendingVisionCmdIdRef.current = String(inserted.id);
+    } else {
+      setIsScanningVision(false);
+    }
+  };
+
   const handleFetchFileFromLaptop = async (file: FileSuggestion) => {
     if (!file?.fullPath || uploadingFiles[file.fullPath]) return;
     triggerHaptic(18);
     setUploadingFiles((prev) => ({ ...prev, [file.fullPath]: true }));
 
-    const inserted = await dispatchRemoteCommand(
-      'fetch_file',
-      {
-        file_path: file.fullPath,
-        file_name: file.fileName
-      },
-      `Uploading ${file.fileName}...`
-    );
+    const inserted = await dispatchRemoteCommand('fetch_file', {
+      file_path: file.fullPath,
+      file_name: file.fileName
+    });
 
     if (inserted?.id) {
       setUploadingFiles((prev) => ({ ...prev, [file.fullPath]: inserted.id }));
@@ -405,14 +575,14 @@ export default function App() {
     const clean = promptText.trim();
     if (!clean) return;
     setPromptText('');
-    await dispatchRemoteCommand('gemini_prompt', clean, 'Executing AI...');
+    await dispatchRemoteCommand('gemini_prompt', { prompt: clean });
   };
 
   const handleThemeSync = async (themeObj: ThemeOption) => {
     triggerHaptic(14);
     setActiveTheme(themeObj);
-    setIslandExpanded(false);
-    await dispatchRemoteCommand('theme_sync', themeObj.id, `Theme → ${themeObj.label}`);
+    setShowThemeBar(false);
+    await dispatchRemoteCommand('theme_sync', { theme: themeObj.id });
   };
 
   const toggleVoiceRecognition = useCallback(() => {
@@ -439,21 +609,19 @@ export default function App() {
     recognition.onstart = () => {
       setIsListening(true);
       setIslandState('executing');
-      setIslandDetail(speechLang === 'id-ID' ? 'Listening (ID)...' : 'Listening (EN)...');
     };
 
     recognition.onresult = (event) => {
       const transcript = event.results?.[0]?.[0]?.transcript?.trim() || '';
       if (transcript) {
         setPromptText(transcript);
-        void dispatchRemoteCommand('gemini_prompt', transcript, 'Voice Command...');
+        void dispatchRemoteCommand('gemini_prompt', { prompt: transcript });
       }
     };
 
     recognition.onerror = () => {
       setIsListening(false);
       setIslandState('connected');
-      setIslandDetail('Desktop Linked');
     };
 
     recognition.onend = () => {
@@ -468,12 +636,13 @@ export default function App() {
   useEffect(() => {
     return registerWidgetDeepLinks({
       onVoiceTrigger: () => {
+        setActiveTab('command');
         window.setTimeout(() => {
           toggleVoiceRecognition();
         }, 250);
       },
       onFileSearchTrigger: () => {
-        setActiveTab('island');
+        setActiveTab('command');
         setPromptText('Cari file ');
         window.setTimeout(() => {
           promptInputRef.current?.focus();
@@ -510,19 +679,13 @@ export default function App() {
   const isDesktopOnline = islandState !== 'unconfigured' && islandState !== 'offline';
 
   return (
-    <div className="min-h-screen bg-[#09090B] text-[#E5E1E4] flex flex-col select-none antialiased">
-      {/* Subtle Ambient Gold Radial Bloom */}
-      <div
-        className="pointer-events-none fixed top-[-90px] left-1/2 -translate-x-1/2 w-80 h-44 rounded-full blur-[90px] opacity-15 transition-colors duration-500 z-0"
-        style={{ backgroundColor: activeTheme.hex }}
-      />
-
-      {/* TOP FIXED HEADER (Stitch Obsidian Cockpit Header) */}
-      <header className="fixed top-0 inset-x-0 z-40 pt-safe bg-[#09090B]/85 backdrop-blur-xl border-b border-[#27272A]/70">
-        <div className="h-16 px-4 flex items-center justify-between max-w-md mx-auto">
+    <div className="min-h-[100dvh] flex flex-col bg-[#09090B] text-[#FAFAFA] select-none antialiased">
+      {/* STICKY TOP HEADER (z-40) */}
+      <header className="sticky top-0 z-40 bg-[#09090B]/95 backdrop-blur-md border-b border-[#27272A] pt-safe">
+        <div className="h-14 px-4 flex items-center justify-between max-w-md mx-auto">
           <div className="flex items-center gap-2.5 min-w-0">
-            {/* Living NotchX Brand Mark */}
-            <div className="w-9 h-9 rounded-xl bg-[#121215] border border-[#27272A] flex items-center justify-center gap-1 shrink-0 shadow-inner">
+            {/* Compact Living NotchX Mark */}
+            <div className="w-8 h-8 rounded-xl bg-[#121215] border border-[#27272A] flex items-center justify-center gap-1 shrink-0">
               <span
                 className="nx-eye w-1.5 h-2 rounded-full inline-block"
                 style={{ backgroundColor: activeTheme.hex }}
@@ -533,268 +696,215 @@ export default function App() {
               />
             </div>
 
-            <div className="flex flex-col min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="font-display text-[17px] font-bold tracking-tight text-[#E5E1E4] truncate">
-                  NotchX
-                </span>
-                <span className="font-mono text-[10px] font-semibold tracking-wider text-[#99907D] uppercase">
-                  Remote
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 mt-0.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-display text-base font-bold tracking-tight text-[#FAFAFA]">
+                NotchX
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border font-mono text-[9px] font-semibold tracking-wider uppercase ${
+                  islandState === 'unconfigured'
+                    ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                    : islandState === 'executing'
+                    ? 'bg-[#E5C158]/15 border-[#E5C158]/40 text-[#E5C158]'
+                    : 'bg-[#10B981]/10 border-[#10B981]/30 text-[#10B981]'
+                }`}
+              >
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
-                    islandState === 'executing'
-                      ? 'bg-[#E5C158] animate-ping'
-                      : islandState === 'unconfigured'
+                    islandState === 'unconfigured'
                       ? 'bg-rose-400'
-                      : 'bg-[#10B981] shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse'
+                      : islandState === 'executing'
+                      ? 'bg-[#E5C158] animate-ping'
+                      : 'bg-[#10B981] animate-pulse'
                   }`}
                 />
-                <span
-                  className={`font-mono text-[10px] font-semibold tracking-widest uppercase ${
-                    islandState === 'executing'
-                      ? 'text-[#FFDE82]'
-                      : islandState === 'unconfigured'
-                      ? 'text-rose-400'
-                      : 'text-[#4EDEA3]'
-                  }`}
-                >
-                  {islandState === 'executing'
-                    ? islandDetail
-                    : islandState === 'unconfigured'
-                    ? 'DESKTOP UNPAIRED'
-                    : 'DESKTOP ONLINE'}
-                </span>
-              </div>
+                {islandState === 'unconfigured'
+                  ? 'OFFLINE'
+                  : islandState === 'executing'
+                  ? 'SYNCING'
+                  : realtimeLive
+                  ? 'LIVE'
+                  : 'DESKTOP ONLINE'}
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic(8);
+                setShowThemeBar((v) => !v);
+              }}
+              aria-label="Theme Switcher"
+              className="w-9 h-9 rounded-xl bg-[#121215] border border-[#27272A] flex items-center justify-center active:scale-95 transition-transform"
+            >
+              <Palette className="w-4 h-4" style={{ color: activeTheme.hex }} />
+            </button>
+
             <button
               type="button"
               onClick={() => {
                 triggerHaptic(10);
                 setShowPairingModal(true);
               }}
-              aria-label="Desktop Pairing"
-              className="h-10 px-3 rounded-xl bg-[#121215] hover:bg-[#201F22] border border-[#27272A] text-[#E5E1E4] active:scale-95 transition-all flex items-center gap-1.5"
+              aria-label="Pairing & Settings"
+              className="h-9 px-2.5 rounded-xl bg-[#121215] border border-[#27272A] text-[#FAFAFA] flex items-center gap-1.5 active:scale-95 transition-transform"
             >
-              <Link2 className="w-4 h-4" style={{ color: activeTheme.hex }} />
-              <span className="font-mono text-[10px] font-semibold uppercase text-[#D0C5B1]">
-                Pair
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                triggerHaptic(10);
-                setIslandExpanded((v) => !v);
-              }}
-              aria-label="Theme Sync"
-              className="w-10 h-10 rounded-xl bg-[#121215] hover:bg-[#201F22] border border-[#27272A] flex items-center justify-center active:scale-95 transition-all"
-            >
-              <Palette className="w-4 h-4" style={{ color: activeTheme.hex }} />
+              <Link2 className="w-3.5 h-3.5" style={{ color: activeTheme.hex }} />
+              <span className="font-mono text-[10px] font-semibold uppercase">Pair</span>
             </button>
           </div>
         </div>
+
+        {/* Optional Quick Theme Strip */}
+        {showThemeBar && (
+          <div className="px-4 pb-3 pt-1 border-t border-[#27272A]/60 max-w-md mx-auto grid grid-cols-5 gap-1.5">
+            {THEMES.map((t) => {
+              const selected = t.id === activeTheme.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => void handleThemeSync(t)}
+                  className={`flex flex-col items-center gap-1 py-1.5 px-1 rounded-xl border transition-all active:scale-95 ${
+                    selected
+                      ? 'bg-[#201F22] border-[#E5C158]/60'
+                      : 'bg-[#121215] border-[#27272A] opacity-75'
+                  }`}
+                >
+                  <span
+                    className="w-3.5 h-3.5 rounded-full"
+                    style={{ backgroundColor: t.hex }}
+                  />
+                  <span className="text-[9px] font-medium text-[#D0C5B1] truncate w-full text-center">
+                    {t.label.split(' ')[0]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </header>
 
-      {/* MAIN COCKPIT CONTAINER */}
-      <main className="relative z-10 flex flex-col w-full max-w-md mx-auto pt-20 pb-40 px-4 gap-3.5">
-        {/* Realtime Dynamic Island Mirror Pill */}
-        <section className="w-full bg-[#0E0E10] border border-[#27272A] rounded-[24px] p-2.5 shadow-lg">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 pl-1.5 min-w-0">
-              <div
-                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                  isDesktopOnline
-                    ? 'bg-[#4EDEA3] shadow-[0_0_8px_rgba(78,222,163,0.6)] animate-pulse'
-                    : 'bg-rose-400'
-                }`}
-              />
-              <span className="font-mono text-[10px] font-semibold tracking-wider text-[#4EDEA3] uppercase truncate">
-                LIVE DESKTOP NOTCH
-              </span>
-            </div>
+      {/* SCROLLABLE CONTENT AREA */}
+      <main className="flex-1 overflow-y-auto px-4 pt-3 pb-24 w-full max-w-md mx-auto">
+        {activeTab === 'media' && (
+          <MediaPlayerCard
+            media={media}
+            accentHex={activeTheme.hex}
+            onPlayPause={handlePlayPause}
+            onPrev={handlePrevTrack}
+            onNext={handleNextTrack}
+            onToggleShuffle={() => {
+              triggerHaptic(10);
+              setMedia((prev) => ({ ...prev, shuffle: !prev.shuffle }));
+            }}
+            onToggleRepeat={() => {
+              triggerHaptic(10);
+              setMedia((prev) => ({ ...prev, repeat: !prev.repeat }));
+            }}
+            onSeek={(pct) => {
+              markLocalAction();
+              setMedia((prev) => ({
+                ...prev,
+                progress: pct,
+                elapsedSec: Math.round((pct / 100) * prev.durationSec)
+              }));
+            }}
+          />
+        )}
 
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#201F22] border border-[#27272A] max-w-[165px]">
-              <AudioWaveform className="w-3.5 h-3.5 shrink-0" style={{ color: activeTheme.hex }} />
-              <span className="font-mono text-[11px] text-[#E5E1E4] truncate">
-                {media.isPlaying ? `Playing: ${media.title}` : islandDetail}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                triggerHaptic(8);
-                setIslandExpanded((v) => !v);
-              }}
-              aria-label="Toggle Mirror Details"
-              className="w-7 h-7 rounded-full bg-[#2A2A2C] flex items-center justify-center text-[#D0C5B1] active:scale-95 transition-transform shrink-0"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {islandExpanded && (
-            <div className="mt-2.5 pt-2.5 border-t border-[#27272A] flex flex-col gap-2 px-1">
-              <div className="flex items-center justify-between font-mono text-[10px] text-[#99907D]">
-                <span>LIVE WINDOWS THEME · TARGET: {deviceId}</span>
-                <span style={{ color: activeTheme.hex }}>{activeTheme.id}</span>
-              </div>
-              <div className="grid grid-cols-5 gap-1.5">
-                {THEMES.map((t) => {
-                  const selected = t.id === activeTheme.id;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => void handleThemeSync(t)}
-                      className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl border transition-all active:scale-95 ${
-                        selected
-                          ? 'bg-[#201F22] border-[#E5C158]/50'
-                          : 'bg-[#121215] border-[#27272A] opacity-75 hover:opacity-100'
-                      }`}
-                    >
-                      <span
-                        className="w-4 h-4 rounded-full"
-                        style={{
-                          backgroundColor: t.hex,
-                          boxShadow: selected ? `0 0 12px ${t.hex}` : 'none'
-                        }}
-                      />
-                      <span className="text-[10px] font-medium text-[#D0C5B1] truncate w-full text-center">
-                        {t.label.split(' ')[0]}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* TAB: ISLAND (Main Stitch Cockpit View) & AUDIO */}
-        {(activeTab === 'island' || activeTab === 'audio') && (
-          <>
-            <MediaPlayerCard
-              media={media}
-              accentHex={activeTheme.hex}
-              onPlayPause={() => {
-                setMedia((prev) => ({ ...prev, isPlaying: !prev.isPlaying }));
-                void dispatchRemoteCommand('media_control', 'play_pause', 'Play / Pause');
-              }}
-              onPrev={() => {
-                void dispatchRemoteCommand('media_control', 'previous', 'Previous Track');
-              }}
-              onNext={() => {
-                void dispatchRemoteCommand('media_control', 'next', 'Next Track');
-              }}
-              onToggleShuffle={() => {
-                triggerHaptic(10);
-                setMedia((prev) => ({ ...prev, shuffle: !prev.shuffle }));
-              }}
-              onToggleRepeat={() => {
-                triggerHaptic(10);
-                setMedia((prev) => ({ ...prev, repeat: !prev.repeat }));
-              }}
-              onSeek={(pct) => {
-                setMedia((prev) => ({
-                  ...prev,
-                  progress: pct,
-                  elapsedSec: Math.round((pct / 100) * prev.durationSec)
-                }));
-              }}
-            />
-
+        {activeTab === 'remote' && (
+          <div className="flex flex-col gap-5">
             <TelemetrySliders
               volume={volume}
               brightness={brightness}
               isMuted={isMuted}
               accentHex={activeTheme.hex}
               onVolumeChange={(v) => {
+                markLocalAction();
                 setIsMuted(false);
                 setVolume(v);
               }}
               onVolumeCommit={(v) => {
-                void dispatchRemoteCommand(
-                  'gemini_prompt',
-                  `Set my Windows laptop master volume to ${v}% using control_media_and_audio set_volume`,
-                  `Volume ${v}%`
-                );
+                markLocalAction();
+                void dispatchRemoteCommand('gemini_prompt', {
+                  prompt: `Set my Windows laptop master volume to ${v}% using control_media_and_audio set_volume`
+                });
               }}
-              onBrightnessChange={(v) => setBrightness(v)}
+              onBrightnessChange={(v) => {
+                markLocalAction();
+                setBrightness(v);
+              }}
               onBrightnessCommit={(v) => {
-                void dispatchRemoteCommand(
-                  'gemini_prompt',
-                  `Set my Windows display brightness to ${v}% using control_system brightness`,
-                  `Brightness ${v}%`
-                );
+                markLocalAction();
+                void dispatchRemoteCommand('gemini_prompt', {
+                  prompt: `Set my Windows display brightness to ${v}% using control_system brightness`
+                });
               }}
             />
-          </>
+
+            <QuickActionsGrid
+              isMuted={isMuted}
+              isMicMuted={isMicMuted}
+              isScanningVision={isScanningVision}
+              miniPillActive={miniPillActive}
+              isConnected={isDesktopOnline}
+              accentHex={activeTheme.hex}
+              onMicToggle={handleMicToggle}
+              onVisionScan={() => void handleVisionScan()}
+              onMuteToggle={handleMuteToggle}
+              onNotchMiniPill={handleNotchMiniPill}
+              onFindFile={() => {
+                triggerHaptic(12);
+                setActiveTab('command');
+                setPromptText('Cari file ');
+                window.setTimeout(() => promptInputRef.current?.focus(), 120);
+              }}
+              onLockRequest={() => {
+                triggerHaptic(14);
+                setShowLockConfirm(true);
+              }}
+            />
+          </div>
         )}
 
-        {/* TAB: ISLAND & ACTIONS -> Quick PC Actions Matrix */}
-        {(activeTab === 'island' || activeTab === 'actions') && (
-          <QuickActionsGrid
-            isMuted={isMuted}
+        {activeTab === 'command' && (
+          <CommandTab
+            promptText={promptText}
+            speechLang={speechLang}
             isListening={isListening}
-            miniPillActive={miniPillActive}
-            isConnected={isDesktopOnline}
+            isScanningVision={isScanningVision}
             accentHex={activeTheme.hex}
-            showExtended={activeTab === 'actions'}
-            onMuteToggle={() => {
-              setIsMuted((m) => !m);
-              void dispatchRemoteCommand('media_control', 'mute', 'Toggle Audio Mute');
+            inputRef={promptInputRef}
+            commands={commands}
+            copiedId={copiedId}
+            uploadingFiles={uploadingFiles}
+            onChangePrompt={setPromptText}
+            onToggleSpeechLang={() => {
+              triggerHaptic(8);
+              setSpeechLang((l) => (l === 'id-ID' ? 'en-US' : 'id-ID'));
             }}
-            onLockRequest={() => {
-              triggerHaptic(14);
-              setShowLockConfirm(true);
-            }}
-            onFindFile={() => {
-              triggerHaptic(12);
-              setPromptText('Cari file ');
-              promptInputRef.current?.focus();
-            }}
-            onScreenshot={() => {
-              void dispatchRemoteCommand(
-                'gemini_prompt',
-                'Analyze my current laptop screen and summarize what is visible right now',
-                'Screen Scan...'
-              );
-            }}
-            onMicToggle={toggleVoiceRecognition}
-            onNotchMiniPill={() => {
-              setMiniPillActive((v) => !v);
-              void dispatchRemoteCommand(
-                'gemini_prompt',
-                'Show a NotchX Remote Mini-Pill alert banner saying "Synced from Phone"',
-                'Notch Morph'
-              );
-            }}
-            onPromptAction={(prompt, label) => {
-              void dispatchRemoteCommand('gemini_prompt', prompt, label);
-            }}
+            onToggleVoice={toggleVoiceRecognition}
+            onSubmit={(e) => void handleSendPrompt(e)}
             onOpenClipboard={() => {
               triggerHaptic(10);
               setShowClipboardModal(true);
             }}
-          />
-        )}
-
-        {/* TAB: STATS / TELEMETRY & LIVE RESULTS FEED */}
-        {(activeTab === 'island' || activeTab === 'stats') && (
-          <CommandFeed
-            commands={commands}
-            copiedId={copiedId}
-            uploadingFiles={uploadingFiles}
-            maxItems={activeTab === 'island' ? 5 : 20}
-            onRefresh={() => {
+            onVisionScan={() => void handleVisionScan()}
+            onClearIsland={() => {
+              void dispatchRemoteCommand('toggle_mini_pill', {
+                action: 'clear_island',
+                prompt: 'Collapse or clear NotchX Dynamic Island status banner'
+              });
+            }}
+            onQuickFilePrompt={() => {
+              triggerHaptic(10);
+              setPromptText('Cari file ');
+              promptInputRef.current?.focus();
+            }}
+            onRefreshFeed={() => {
               triggerHaptic(8);
               void fetchRecentCommands(supabase);
             }}
@@ -804,81 +914,14 @@ export default function App() {
         )}
       </main>
 
-      {/* BOTTOM QUICK-COMMAND INPUT DOCK */}
-      <div className="fixed bottom-[76px] inset-x-0 px-4 z-40 flex justify-center pointer-events-none pb-safe">
-        <form
-          onSubmit={(e) => void handleSendPrompt(e)}
-          className="w-full max-w-md bg-[#121215]/95 backdrop-blur-xl border border-[#27272A] rounded-full p-1.5 pl-3 flex items-center gap-1.5 shadow-2xl pointer-events-auto"
-        >
-          <button
-            type="button"
-            onClick={() => {
-              triggerHaptic(8);
-              setSpeechLang((l) => (l === 'id-ID' ? 'en-US' : 'id-ID'));
-            }}
-            className="px-2 py-1 rounded-full bg-[#201F22] border border-[#27272A] font-mono text-[10px] font-semibold text-[#D0C5B1] shrink-0 active:scale-95"
-            title="Switch Voice Language"
-          >
-            {speechLang === 'id-ID' ? 'ID' : 'EN'}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              triggerHaptic(8);
-              setShowClipboardModal(true);
-            }}
-            className="p-1.5 rounded-full text-[#99907D] hover:text-[#E5E1E4] shrink-0"
-            title="Push Clipboard"
-          >
-            <Clipboard className="w-4 h-4" />
-          </button>
-
-          <input
-            ref={promptInputRef}
-            type="text"
-            value={promptText}
-            onChange={(e) => setPromptText(e.target.value)}
-            placeholder="Send note or AI command to NotchX..."
-            className="flex-1 bg-transparent text-xs text-[#E5E1E4] placeholder:text-[#99907D] focus:outline-none px-1 min-w-0"
-          />
-
-          <button
-            type="button"
-            onClick={toggleVoiceRecognition}
-            aria-label="Voice Command"
-            className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all shrink-0 active:scale-95 ${
-              isListening
-                ? 'bg-rose-500/25 border-rose-400 text-rose-300 animate-pulse shadow-[0_0_16px_rgba(244,63,94,0.5)]'
-                : 'bg-[#201F22] border-[#27272A] text-[#D0C5B1] hover:text-[#E5E1E4]'
-            }`}
-          >
-            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          </button>
-
-          <button
-            type="submit"
-            aria-label="Send Command"
-            className="w-9 h-9 rounded-full flex items-center justify-center text-[#09090B] font-bold shrink-0 active:scale-90 transition-transform"
-            style={{
-              backgroundColor: activeTheme.hex,
-              boxShadow: `0 0 14px rgba(${activeTheme.rgb}, 0.4)`
-            }}
-          >
-            <ArrowUp className="w-4 h-4 stroke-[2.5]" />
-          </button>
-        </form>
-      </div>
-
-      {/* BOTTOM NAVIGATION BAR (Stitch 4-Tab Nav) */}
-      <nav className="fixed bottom-0 inset-x-0 z-40 pb-safe bg-[#09090B]/92 backdrop-blur-xl border-t border-[#27272A]/80">
-        <div className="flex justify-around items-center h-16 max-w-md mx-auto px-2">
+      {/* FIXED 3-TAB BOTTOM NAVIGATION BAR (z-50) */}
+      <nav className="fixed bottom-0 inset-x-0 z-50 bg-[#09090B]/95 backdrop-blur-md border-t border-[#27272A] pb-safe">
+        <div className="grid grid-cols-3 h-16 max-w-md mx-auto">
           {(
             [
-              { id: 'island', label: 'Island', Icon: Smartphone },
-              { id: 'audio', label: 'Audio', Icon: AudioWaveform },
-              { id: 'stats', label: 'PC Stats', Icon: Cpu },
-              { id: 'actions', label: 'Actions', Icon: LayoutGrid }
+              { id: 'media', label: 'Media', Icon: Disc3 },
+              { id: 'remote', label: 'Remote', Icon: Sliders },
+              { id: 'command', label: 'Command', Icon: Terminal }
             ] as const
           ).map(({ id, label, Icon }) => {
             const active = activeTab === id;
@@ -890,20 +933,38 @@ export default function App() {
                   triggerHaptic(8);
                   setActiveTab(id);
                 }}
-                className={`flex flex-col items-center justify-center gap-1 min-w-[60px] min-h-[44px] transition-colors ${
-                  active ? 'font-semibold' : 'text-[#99907D] hover:text-[#E5E1E4]'
+                className={`flex flex-col items-center justify-center gap-1 transition-all active:scale-95 ${
+                  active ? 'font-semibold' : 'text-[#A1A1AA] hover:text-[#FAFAFA]'
                 }`}
                 style={active ? { color: activeTheme.hex } : undefined}
               >
-                <Icon className="w-[18px] h-[18px]" />
-                <span className="font-mono text-[9px] uppercase tracking-wider">{label}</span>
+                <Icon className="w-5 h-5" />
+                <span className="font-mono text-[10px] uppercase tracking-wider">{label}</span>
               </button>
             );
           })}
         </div>
       </nav>
 
-      {/* MODALS */}
+      {/* VISION SCAN RESULT SHEET */}
+      <VisionResultModal
+        result={visionResult}
+        isScanning={isScanningVision}
+        accentHex={activeTheme.hex}
+        onClose={() => setVisionResult(null)}
+        onScanAgain={() => {
+          setVisionResult(null);
+          void handleVisionScan();
+        }}
+        onAskFollowUp={() => {
+          setVisionResult(null);
+          setActiveTab('command');
+          setPromptText('Tentang layar PC tadi: ');
+          window.setTimeout(() => promptInputRef.current?.focus(), 150);
+        }}
+      />
+
+      {/* PAIRING & BRIDGE MODAL */}
       <PairingModal
         open={showPairingModal}
         isConnected={isDesktopOnline}
@@ -918,6 +979,7 @@ export default function App() {
         onClose={() => setShowPairingModal(false)}
       />
 
+      {/* CLIPBOARD SYNC MODAL */}
       <ClipboardModal
         open={showClipboardModal}
         value={clipboardInput}
@@ -925,32 +987,32 @@ export default function App() {
         onChange={setClipboardInput}
         onPull={() => {
           setShowClipboardModal(false);
-          void dispatchRemoteCommand(
-            'gemini_prompt',
-            'Read my current Windows clipboard text using clipboard_sync get and show it to me',
-            'Reading PC Clipboard...'
-          );
+          void dispatchRemoteCommand('gemini_prompt', {
+            prompt: 'Read my current Windows clipboard text using clipboard_sync get and show it to me'
+          });
         }}
         onPush={() => {
           const text = clipboardInput.trim();
           if (!text) return;
           setClipboardInput('');
           setShowClipboardModal(false);
-          void dispatchRemoteCommand(
-            'gemini_prompt',
-            `Copy this exact text to my Windows clipboard using clipboard_sync set: ${text}`,
-            'Syncing Clipboard...'
-          );
+          void dispatchRemoteCommand('gemini_prompt', {
+            prompt: `Copy this exact text to my Windows clipboard using clipboard_sync set: ${text}`
+          });
         }}
         onClose={() => setShowClipboardModal(false)}
       />
 
+      {/* 2-STEP LOCK PC CONFIRMATION */}
       <LockConfirmModal
         open={showLockConfirm}
         onCancel={() => setShowLockConfirm(false)}
         onConfirm={() => {
           setShowLockConfirm(false);
-          void dispatchRemoteCommand('system_action', 'lock', 'Locking PC...');
+          void dispatchRemoteCommand('system_action', {
+            action: 'lock',
+            command: 'lock_pc'
+          });
         }}
       />
     </div>
