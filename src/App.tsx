@@ -21,7 +21,8 @@ import {
 } from './lib/widgetBridge';
 import {
   extractTelemetryFromResult,
-  extractVisionResult
+  extractVisionResult,
+  normalizeVisionPayload
 } from './lib/commandParsers';
 import { MediaPlayerCard } from './components/MediaPlayerCard';
 import { TelemetrySliders } from './components/TelemetrySliders';
@@ -184,18 +185,36 @@ export default function App() {
   const applyRemoteTelemetry = useCallback((telemetry: DeviceStateTelemetry) => {
     const withinLockout = Date.now() - lastLocalActionAt.current < LOCAL_ECHO_LOCKOUT_MS;
 
-    setMedia((prev) => ({
-      ...prev,
-      title: telemetry.title ?? prev.title,
-      artist: telemetry.artist ?? prev.artist,
-      albumArt: telemetry.album_art ?? prev.albumArt,
-      source: telemetry.source ?? prev.source,
-      currentLyric: telemetry.active_lyric ?? prev.currentLyric,
-      nextLyric: telemetry.next_lyric ?? prev.nextLyric,
-      isPlaying: !withinLockout && telemetry.is_playing !== undefined
-        ? telemetry.is_playing
-        : prev.isPlaying
-    }));
+    setMedia((prev) => {
+      const nextDuration =
+        typeof telemetry.duration_sec === 'number' && telemetry.duration_sec > 0
+          ? telemetry.duration_sec
+          : prev.durationSec;
+      const nextElapsed =
+        typeof telemetry.position_sec === 'number' && telemetry.position_sec >= 0
+          ? telemetry.position_sec
+          : prev.elapsedSec;
+      const nextProgress =
+        typeof telemetry.position_sec === 'number'
+          ? Math.min(100, Math.round((nextElapsed / Math.max(1, nextDuration)) * 100))
+          : prev.progress;
+
+      return {
+        ...prev,
+        title: telemetry.title ?? prev.title,
+        artist: telemetry.artist ?? prev.artist,
+        albumArt: telemetry.album_art ?? prev.albumArt,
+        source: telemetry.source_app ?? telemetry.source ?? prev.source,
+        durationSec: nextDuration,
+        elapsedSec: nextElapsed,
+        progress: nextProgress,
+        currentLyric: telemetry.active_lyric ?? prev.currentLyric,
+        nextLyric: telemetry.next_lyric ?? prev.nextLyric,
+        isPlaying: !withinLockout && telemetry.is_playing !== undefined
+          ? telemetry.is_playing
+          : prev.isPlaying
+      };
+    });
 
     if (!withinLockout) {
       if (typeof telemetry.volume === 'number') setVolume(telemetry.volume);
@@ -205,6 +224,35 @@ export default function App() {
       if (typeof telemetry.mini_pill === 'boolean') setMiniPillActive(telemetry.mini_pill);
     }
   }, []);
+
+  const handleIncomingVisionPayload = useCallback(
+    (rawPayload: unknown, fallbackId?: string) => {
+      if (!rawPayload || typeof rawPayload !== 'object') return;
+      const outer = rawPayload as Record<string, unknown>;
+      const candidate =
+        'payload' in outer &&
+        typeof outer.payload === 'object' &&
+        outer.payload !== null
+          ? (outer.payload as Record<string, unknown>)
+          : outer;
+
+      pendingVisionCmdIdRef.current = null;
+      setIsScanningVision(false);
+      triggerHaptic(22);
+
+      const parsed = normalizeVisionPayload(candidate, fallbackId);
+      if (parsed.isError) {
+        showToast('error', parsed.errorMessage);
+        setIslandState('connected');
+        return;
+      }
+
+      setVisionResult(parsed.data);
+      setIslandState('done');
+      window.setTimeout(() => setIslandState('connected'), 1800);
+    },
+    [showToast]
+  );
 
   // Sync dynamic accent CSS variables
   useEffect(() => {
@@ -306,7 +354,9 @@ export default function App() {
           if (finishedVision) {
             pendingVisionCmdIdRef.current = null;
             setIsScanningVision(false);
-            if (finishedVision.status !== 'error' && finishedVision.result_text) {
+            if (finishedVision.status === 'error') {
+              showToast('error', finishedVision.result_text || 'Vision Scan gagal di laptop.');
+            } else if (finishedVision.result_text) {
               const parsed = extractVisionResult(
                 String(finishedVision.id),
                 finishedVision.result_text,
@@ -318,7 +368,7 @@ export default function App() {
         }
       }
     },
-    [deviceId, applyRemoteTelemetry]
+    [deviceId, applyRemoteTelemetry, showToast]
   );
 
   // Startup credential sync + Instant Supabase Realtime WebSocket Subscriptions
@@ -380,7 +430,9 @@ export default function App() {
           ) {
             pendingVisionCmdIdRef.current = null;
             setIsScanningVision(false);
-            if (row.status !== 'error' && row.result_text) {
+            if (row.status === 'error') {
+              showToast('error', row.result_text || 'Vision Scan gagal di laptop.');
+            } else if (row.result_text) {
               const parsed = extractVisionResult(String(row.id), row.result_text, row.created_at);
               if (parsed) setVisionResult(parsed);
             }
@@ -403,7 +455,11 @@ export default function App() {
         },
         (payload) => {
           const rec = payload.new as DeviceStateTelemetry | undefined;
-          if (rec) applyRemoteTelemetry(rec);
+          if (!rec) return;
+          applyRemoteTelemetry(rec);
+          if (rec.vision_result && pendingVisionCmdIdRef.current) {
+            handleIncomingVisionPayload(rec.vision_result);
+          }
         }
       )
       .on(
@@ -416,7 +472,11 @@ export default function App() {
         },
         (payload) => {
           const rec = payload.new as DeviceStateTelemetry | undefined;
-          if (rec) applyRemoteTelemetry(rec);
+          if (!rec) return;
+          applyRemoteTelemetry(rec);
+          if (rec.vision_result && pendingVisionCmdIdRef.current) {
+            handleIncomingVisionPayload(rec.vision_result);
+          }
         }
       )
       .on(
@@ -429,31 +489,29 @@ export default function App() {
         },
         (payload) => {
           const rec = payload.new as Record<string, unknown> | undefined;
-          if (!rec) return;
-          pendingVisionCmdIdRef.current = null;
-          setIsScanningVision(false);
-          triggerHaptic(22);
-          setVisionResult({
-            id: String(rec.id || Date.now()),
-            screenshotUrl:
-              (rec.screenshot_url as string) ||
-              (rec.image_url as string) ||
-              undefined,
-            explanation:
-              (rec.explanation as string) ||
-              (rec.analysis as string) ||
-              (rec.result_text as string) ||
-              'Screen analysis complete.',
-            createdAt: rec.created_at as string | undefined
-          });
+          if (rec) handleIncomingVisionPayload(rec, String(rec.id || Date.now()));
         }
       )
       .on('broadcast', { event: 'device_state' }, ({ payload }) => {
         if (payload) applyRemoteTelemetry(payload as DeviceStateTelemetry);
       })
+      .on('broadcast', { event: 'vision_result' }, ({ payload }) => {
+        if (payload) handleIncomingVisionPayload(payload);
+      })
       .subscribe((status) => {
         setRealtimeLive(status === 'SUBSCRIBED');
       });
+
+    // Secondary Windows _stateChannel (`notchx-state:<device_id>`) for media_state & vision_result
+    const stateChannel = supabase
+      .channel(`notchx-state:${activeDeviceId}`)
+      .on('broadcast', { event: 'media_state' }, ({ payload }) => {
+        if (payload) applyRemoteTelemetry(payload as DeviceStateTelemetry);
+      })
+      .on('broadcast', { event: 'vision_result' }, ({ payload }) => {
+        if (payload) handleIncomingVisionPayload(payload);
+      })
+      .subscribe();
 
     const pollInterval = window.setInterval(() => {
       void fetchRecentCommands(supabase);
@@ -463,8 +521,9 @@ export default function App() {
       setRealtimeLive(false);
       window.clearInterval(pollInterval);
       void supabase.removeChannel(channel);
+      void supabase.removeChannel(stateChannel);
     };
-  }, [supabase, fetchRecentCommands, applyRemoteTelemetry]);
+  }, [supabase, fetchRecentCommands, applyRemoteTelemetry, handleIncomingVisionPayload, showToast]);
 
   const dispatchRemoteCommand = useCallback(
     async (commandType: string, payloadInput: unknown) => {

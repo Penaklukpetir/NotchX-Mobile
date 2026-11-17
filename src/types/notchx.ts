@@ -64,6 +64,9 @@ export interface DeviceStateTelemetry {
   artist?: string;
   album_art?: string;
   source?: string;
+  source_app?: string;
+  position_sec?: number;
+  duration_sec?: number;
   active_lyric?: string;
   next_lyric?: string;
   volume?: number;
@@ -71,6 +74,7 @@ export interface DeviceStateTelemetry {
   is_muted?: boolean;
   mic_muted?: boolean;
   mini_pill?: boolean;
+  vision_result?: Record<string, unknown>;
 }
 
 export type IslandStatus = 'connected' | 'executing' | 'done' | 'unconfigured' | 'offline';

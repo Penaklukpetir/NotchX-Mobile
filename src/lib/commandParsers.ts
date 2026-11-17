@@ -151,6 +151,59 @@ export function extractTelemetryFromResult(
   };
 }
 
+function normalizeImageSrc(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('data:') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  return `data:image/jpeg;base64,${trimmed}`;
+}
+
+export function normalizeVisionPayload(
+  raw: Record<string, unknown>,
+  fallbackId?: string
+): { isError: true; errorMessage: string } | { isError: false; data: VisionResultData } {
+  const errMsg =
+    (typeof raw.error === 'string' && raw.error.trim()) ||
+    (raw.type === 'vision_error' && typeof raw.explanation === 'string' && raw.explanation.trim()) ||
+    '';
+
+  if (raw.type === 'vision_error' || Boolean(raw.error)) {
+    return {
+      isError: true,
+      errorMessage: errMsg || 'Vision Scan gagal pada laptop.'
+    };
+  }
+
+  const screenshotUrl =
+    normalizeImageSrc(raw.image_base64) ||
+    normalizeImageSrc(raw.screenshot_url) ||
+    normalizeImageSrc(raw.image_url) ||
+    normalizeImageSrc(raw.imageUrl);
+
+  const explanation =
+    (typeof raw.explanation === 'string' && raw.explanation) ||
+    (typeof raw.analysis === 'string' && raw.analysis) ||
+    (typeof raw.summary === 'string' && raw.summary) ||
+    (typeof raw.result_text === 'string' && raw.result_text) ||
+    'Analisis layar PC selesai.';
+
+  return {
+    isError: false,
+    data: {
+      id: String(raw.id || fallbackId || Date.now()),
+      screenshotUrl,
+      explanation,
+      createdAt:
+        (typeof raw.created_at === 'string' && raw.created_at) ||
+        (typeof raw.timestamp === 'string' && raw.timestamp) ||
+        undefined
+    }
+  };
+}
+
 export function extractVisionResult(
   cmdId: string,
   resultText?: string | null,
@@ -161,22 +214,13 @@ export function extractVisionResult(
   if (resultText.includes('__NOTCHX_VISION_RESULT__')) {
     const data = extractJsonObjectAfterMarker(resultText, '__NOTCHX_VISION_RESULT__');
     if (data) {
-      const screenshotUrl =
-        (typeof data.screenshot_url === 'string' && data.screenshot_url) ||
-        (typeof data.imageUrl === 'string' && data.imageUrl) ||
-        (typeof data.image_url === 'string' && data.image_url) ||
-        undefined;
-      const explanation =
-        (typeof data.explanation === 'string' && data.explanation) ||
-        (typeof data.analysis === 'string' && data.analysis) ||
-        (typeof data.summary === 'string' && data.summary) ||
-        resultText;
-      return {
-        id: cmdId,
-        screenshotUrl,
-        explanation,
-        createdAt
-      };
+      const normalized = normalizeVisionPayload(data, cmdId);
+      if (!normalized.isError) {
+        return {
+          ...normalized.data,
+          createdAt: normalized.data.createdAt || createdAt
+        };
+      }
     }
   }
 
