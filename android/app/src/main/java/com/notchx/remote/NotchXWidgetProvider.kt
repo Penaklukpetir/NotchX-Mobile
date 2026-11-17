@@ -28,19 +28,37 @@ class NotchXWidgetProvider : AppWidgetProvider() {
         ) {
             val views = RemoteViews(context.packageName, R.layout.notchx_widget)
 
-            // 1. Voice Prompt Deep Link (notchx://voice)
+            // Header Brand Pill: Open NotchX App
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
             views.setOnClickPendingIntent(
-                R.id.btn_widget_voice,
-                buildDeepLinkPendingIntent(context, "notchx://voice", 101)
+                R.id.widget_brand_pill,
+                PendingIntent.getActivity(
+                    context,
+                    100,
+                    launchIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
             )
 
-            // 2. Cari File Deep Link (notchx://files)
+            // Header Status Label: Quick File Finder Deep Link (notchx://files)
             views.setOnClickPendingIntent(
-                R.id.btn_widget_files,
+                R.id.widget_status_badge,
                 buildDeepLinkPendingIntent(context, "notchx://files", 102)
             )
 
-            // 3. Play / Pause Media (Background HTTP POST)
+            // Media Control Strip: Previous, Play/Pause, Next (Background HTTP POST)
+            views.setOnClickPendingIntent(
+                R.id.btn_widget_prev,
+                buildCommandPendingIntent(
+                    context = context,
+                    commandType = "media_control",
+                    actionName = "previous",
+                    requestCode = 204
+                )
+            )
+
             views.setOnClickPendingIntent(
                 R.id.btn_widget_play_pause,
                 buildCommandPendingIntent(
@@ -51,7 +69,18 @@ class NotchXWidgetProvider : AppWidgetProvider() {
                 )
             )
 
-            // 4. Mute Laptop (Background HTTP POST)
+            views.setOnClickPendingIntent(
+                R.id.btn_widget_next,
+                buildCommandPendingIntent(
+                    context = context,
+                    commandType = "media_control",
+                    actionName = "next",
+                    requestCode = 205
+                )
+            )
+
+            // Bottom 4-Key Tactile Bento Row
+            // 1. Mute Audio (Background HTTP POST)
             views.setOnClickPendingIntent(
                 R.id.btn_widget_mute,
                 buildCommandPendingIntent(
@@ -62,7 +91,24 @@ class NotchXWidgetProvider : AppWidgetProvider() {
                 )
             )
 
-            // 5. Lock PC (Background HTTP POST)
+            // 2. Voice Prompt Deep Link (notchx://voice)
+            views.setOnClickPendingIntent(
+                R.id.btn_widget_voice,
+                buildDeepLinkPendingIntent(context, "notchx://voice", 101)
+            )
+
+            // 3. Notch Mini-Pill Toggle (Background HTTP POST)
+            views.setOnClickPendingIntent(
+                R.id.btn_widget_notch,
+                buildCommandPendingIntent(
+                    context = context,
+                    commandType = "gemini_prompt",
+                    actionName = "Show NotchX remote Mini-Pill banner from Android widget",
+                    requestCode = 206
+                )
+            )
+
+            // 4. Lock PC (Background HTTP POST)
             views.setOnClickPendingIntent(
                 R.id.btn_widget_lock,
                 buildCommandPendingIntent(

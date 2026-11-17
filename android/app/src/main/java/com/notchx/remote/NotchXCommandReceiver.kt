@@ -20,10 +20,28 @@ class NotchXCommandReceiver : BroadcastReceiver() {
         val commandType = intent.getStringExtra(EXTRA_COMMAND_TYPE) ?: return
         val actionName = intent.getStringExtra(EXTRA_ACTION_NAME) ?: return
 
-        val prefs = context.getSharedPreferences(CAPACITOR_PREFS_NAME, Context.MODE_PRIVATE)
-        val rawUrl = (prefs.getString("supabase_url", "") ?: "").trim().trimEnd('/')
-        val anonKey = (prefs.getString("supabase_anon_key", "") ?: "").trim()
-        val targetDevice = (prefs.getString("device_name", "windows") ?: "windows").trim()
+        val widgetPrefs = context.getSharedPreferences(WIDGET_PREFS_NAME, Context.MODE_PRIVATE)
+        val capPrefs = context.getSharedPreferences(CAPACITOR_PREFS_NAME, Context.MODE_PRIVATE)
+
+        val rawUrl = (
+            widgetPrefs.getString("supabase_url", null)
+                ?: capPrefs.getString("supabase_url", "")
+                ?: ""
+            ).trim().trimEnd('/')
+
+        val anonKey = (
+            widgetPrefs.getString("supabase_anon_key", null)
+                ?: capPrefs.getString("supabase_anon_key", "")
+                ?: ""
+            ).trim()
+
+        val targetDevice = (
+            widgetPrefs.getString("device_id", null)
+                ?: widgetPrefs.getString("device_name", null)
+                ?: capPrefs.getString("device_id", null)
+                ?: capPrefs.getString("device_name", "windows")
+                ?: "windows"
+            ).trim().ifEmpty { "windows" }
 
         if (rawUrl.isEmpty() || anonKey.isEmpty()) {
             showToast(context, "NotchX: Buka aplikasi sekali untuk sinkronisasi kunci Supabase")
@@ -31,7 +49,8 @@ class NotchXCommandReceiver : BroadcastReceiver() {
         }
 
         val pendingResult = goAsync()
-        showToast(context, "NotchX: Mengirim $actionName...")
+        val displayLabel = if (commandType == "gemini_prompt") "Notch Mini-Pill" else actionName
+        showToast(context, "NotchX: Mengirim $displayLabel...")
 
         thread(start = true) {
             try {
@@ -54,12 +73,16 @@ class NotchXCommandReceiver : BroadcastReceiver() {
                 }
 
                 val payloadJson = JSONObject().apply {
-                    put("action", actionName)
+                    if (commandType == "gemini_prompt") {
+                        put("prompt", actionName)
+                    } else {
+                        put("action", actionName)
+                    }
                 }
 
                 val bodyJson = JSONObject().apply {
                     put("source_device", "android")
-                    put("target_device", targetDevice.ifEmpty { "windows" })
+                    put("target_device", targetDevice)
                     put("command_type", commandType)
                     put("payload", payloadJson)
                     put("status", "pending")
@@ -74,7 +97,7 @@ class NotchXCommandReceiver : BroadcastReceiver() {
                 conn.disconnect()
 
                 if (code in 200..299) {
-                    showToast(context, "NotchX: Perintah terkirim ($actionName)")
+                    showToast(context, "NotchX: Perintah terkirim ($displayLabel)")
                 } else {
                     showToast(context, "NotchX: Gagal mengirim (HTTP $code)")
                 }
@@ -93,6 +116,7 @@ class NotchXCommandReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        const val WIDGET_PREFS_NAME = "NotchXWidgetPrefs"
         const val CAPACITOR_PREFS_NAME = "CapacitorStorage"
         const val ACTION_SEND_COMMAND = "com.notchx.remote.ACTION_SEND_COMMAND"
         const val EXTRA_COMMAND_TYPE = "extra_command_type"

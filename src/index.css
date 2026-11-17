@@ -7,65 +7,80 @@
   --nx-accent-rgb: 229, 193, 88;
 }
 
-* {
-  -webkit-tap-highlight-color: transparent;
+@layer base {
+  html,
+  body {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #09090B;
+    color: #E5E1E4;
+    overscroll-behavior-y: none;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::-webkit-scrollbar {
+    display: none;
+  }
 }
 
-body {
-  background-color: #09090B;
-  color: #F4F4F5;
-  overflow-x: hidden;
+.pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Antigravity Spatial & Glassmorphism Surfaces */
-.nx-perspective-stage {
-  perspective: 1100px;
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
-.nx-glass-pill {
-  background: linear-gradient(165deg, rgba(24, 24, 29, 0.88) 0%, rgba(9, 9, 11, 0.94) 100%);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    0 20px 45px rgba(0, 0, 0, 0.65),
-    0 0 28px rgba(var(--nx-accent-rgb), 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+.nx-cockpit-card {
+  background-color: #121215;
+  border: 1px solid #27272A;
 }
 
-.nx-spatial-card {
-  background: linear-gradient(155deg, rgba(24, 24, 28, 0.76) 0%, rgba(12, 12, 15, 0.88) 100%);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    0 18px 36px rgba(0, 0, 0, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  transform-style: preserve-3d;
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s ease;
+.nx-recessed-well {
+  background-color: #0E0E10;
+  border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.nx-spatial-card:active {
-  transform: translateZ(-8px) rotateX(4deg) scale(0.965);
-  border-color: rgba(var(--nx-accent-rgb), 0.48);
+.nx-gold-glow {
+  box-shadow: 0 0 24px -4px rgba(var(--nx-accent-rgb), 0.38);
 }
 
 @keyframes nx-eyes-blink {
-  0%, 92%, 100% { transform: scaleY(1); }
-  96% { transform: scaleY(0.12); }
+  0%, 92%, 100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.12);
+  }
 }
 
 .nx-eye {
   animation: nx-eyes-blink 4.6s infinite ease-in-out;
 }
 
+@keyframes nx-eq-bar {
+  0%, 100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.nx-eq-bar {
+  transform-origin: bottom;
+  animation: nx-eq-bar 0.9s infinite ease-in-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .nx-spatial-card,
-  .nx-eye {
+  .nx-eye,
+  .nx-eq-bar {
     animation: none !important;
-    transition: none !important;
-    transform: none !important;
   }
 }
